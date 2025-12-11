@@ -1,0 +1,9 @@
+{
+    "doc_id": "doc_001",
+    "file_name": "statement_nov_2025.pdf",
+    "doc_type": "bank_statement",
+    "page_count": 8,
+    "ingested_at": "2025-12-01T10:00:00",
+    "source": "uploaded_by_user"
+  }
+  

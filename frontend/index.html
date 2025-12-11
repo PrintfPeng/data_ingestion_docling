@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Data Ingestion – Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+    </style>
+  </head>
+  <body
+    class="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-purple-50"
+  >
+    <div class="flex flex-col min-h-screen">
+      <header
+        class="w-full border-b border-slate-200/70 bg-white/70 backdrop-blur sticky top-0 z-10"
+      >
+        <div
+          class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between"
+        >
+          <div>
+            <h1 class="text-2xl md:text-3xl font-extrabold text-slate-900">
+              AI Data Ingestion
+            </h1>
+            <p class="text-xs md:text-sm text-slate-500 mt-1">
+              แชทถามคำถามจากเอกสารที่มีทั้ง
+              <span class="font-semibold text-sky-600"
+                >Text / Table / Image</span
+              >
+              พร้อม RAG + Intent Routing
+            </p>
+          </div>
+          <div class="hidden md:flex flex-col items-end gap-1 text-xs">
+            <span
+              class="inline-flex items-center gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700"
+            >
+              <span
+                class="inline-block h-2 w-2 rounded-full bg-emerald-500"
+              ></span>
+              Backend: FastAPI + RAG + Chroma
+            </span>
+            <span
+              class="inline-flex items-center gap-1 rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-sky-700"
+            >
+              Multi-doc RAG + Intent Routing + Upload
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main class="flex-1">
+        <div class="max-w-6xl mx-auto px-4 py-4 md:py-6">
+          <div
+            id="layout"
+            class="flex flex-col lg:flex-row gap-4 md:gap-6 items-stretch transition-all duration-300"
+          >
+            <section
+              id="chatPanel"
+              class="flex-1 max-w-5xl mx-auto bg-white/80 backdrop-blur shadow-lg shadow-slate-200/60 rounded-2xl border border-slate-100 flex flex-col h-[calc(100vh-9rem)] transition-all duration-300"
+            >
+              <div
+                class="px-4 md:px-6 py-3 border-b border-slate-100 flex items-center justify-between"
+              >
+                <div class="flex items-center gap-2">
+                  <div
+                    class="h-9 w-9 rounded-2xl bg-gradient-to-tr from-pink-500 to-purple-500 flex items-center justify-center text-white shadow-md shadow-pink-200"
+                  >
+                    💬
+                  </div>
+                  <div>
+                    <h2 class="font-semibold text-slate-900">
+                      แชทกับเอกสารของคุณ
+                    </h2>
+                    <p class="text-xs text-slate-500">
+                      ถามได้เลย ไม่ว่าจะเป็น Text, Table หรือ Image
+                    </p>
+                  </div>
+                </div>
+
+                <div class="hidden md:flex items-center gap-2 text-xs">
+                  <label class="text-slate-500">โหมดค้นหา</label>
+                  <select
+                    id="modeSelect"
+                    class="text-xs rounded-full border-slate-200 bg-slate-50 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-sky-400"
+                  >
+                    <option value="auto">Auto (ให้ระบบตัดสินใจเอง)</option>
+                    <option value="text">เฉพาะ Text</option>
+                    <option value="table">เฉพาะ Table</option>
+                    <option value="both">Text + Table</option>
+                  </select>
+                </div>
+              </div>
+
+              <div
+                id="chatMessages"
+                class="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4 text-sm"
+              ></div>
+
+              <div
+                class="border-t border-slate-200 bg-slate-50/70 rounded-b-2xl"
+              >
+                <div
+                  class="px-3 md:px-4 py-2 flex items-center justify-between gap-2"
+                >
+                  <div class="flex items-center gap-2">
+                    <button
+                      id="uploadBtn"
+                      class="inline-flex items-center gap-1 rounded-full bg-sky-600 text-white px-3 py-1.5 text-xs md:text-sm font-medium shadow shadow-sky-300 hover:bg-sky-700 active:scale-[0.98] transition"
+                    >
+                      📎 แนบไฟล์ PDF
+                    </button>
+                    <input
+                      id="fileInput"
+                      type="file"
+                      accept="application/pdf"
+                      class="hidden"
+                    />
+                    <button
+                      id="toggleHistoryBtn"
+                      class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs md:text-sm text-slate-600 hover:bg-slate-100 active:scale-[0.98] transition"
+                    >
+                      🕒 History
+                    </button>
+                  </div>
+
+                  <div class="flex md:hidden items-center gap-1 text-[11px]">
+                    <label class="text-slate-500">โหมด</label>
+                    <select
+                      id="modeSelectMobile"
+                      class="text-[11px] rounded-full border-slate-200 bg-slate-50 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-sky-400"
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="text">Text</option>
+                      <option value="table">Table</option>
+                      <option value="both">Both</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div
+                  class="px-3 md:px-4 pb-1 min-h-[1.5rem] flex items-center"
+                >
+                  <div id="attachmentInfo" class="text-xs text-slate-600"></div>
+                </div>
+
+                <div class="px-3 md:px-4 pb-3">
+                  <div
+                    class="flex items-end gap-2 bg-white rounded-2xl border border-slate-200 px-3 py-2 focus-within:ring-2 focus-within:ring-sky-400 focus-within:border-sky-400"
+                  >
+                    <textarea
+                      id="chatInput"
+                      rows="1"
+                      class="flex-1 resize-none border-none focus:ring-0 focus:outline-none text-sm md:text-base bg-transparent"
+                      placeholder="พิมพ์คำถามของคุณที่นี่ แล้วกด Enter หรือปุ่มส่ง…"
+                    ></textarea>
+                    <button
+                      id="sendBtn"
+                      class="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 text-white px-4 py-2 text-sm font-semibold shadow shadow-sky-300 hover:from-sky-600 hover:to-indigo-600 active:scale-[0.97] transition"
+                    >
+                      🚀 ส่ง
+                    </button>
+                  </div>
+                  <p class="mt-1 text-[11px] text-slate-400">
+                    กด <span class="font-semibold">Shift + Enter</span>
+                    เพื่อขึ้นบรรทัดใหม่
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <aside
+              id="historyPanel"
+              class="w-full lg:w-[360px] bg-white/80 backdrop-blur shadow-lg shadow-slate-200/60 rounded-2xl border border-slate-100 flex flex-col h-[calc(100vh-9rem)] opacity-0 translate-x-4 pointer-events-none hidden transition-all duration-300 ease-out"
+            >
+              <div
+                class="px-4 md:px-5 py-3 border-b border-slate-100 flex items-center justify-between"
+              >
+                <div class="flex items-center gap-2">
+                  <div
+                    class="h-8 w-8 rounded-xl bg-gradient-to-tr from-amber-400 to-orange-500 flex items-center justify-center text-white shadow shadow-amber-200"
+                  >
+                    📜
+                  </div>
+                  <div>
+                    <h2 class="font-semibold text-slate-900 text-sm md:text-base">
+                      History
+                    </h2>
+                    <p class="text-[11px] text-slate-500">
+                      บันทึก Q&amp;A ย้อนหลังล่าสุด
+                    </p>
+                  </div>
+                </div>
+                <button
+                  id="refreshHistoryBtn"
+                  class="text-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600 hover:bg-slate-100 active:scale-[0.97] transition"
+                >
+                  🔄 รีเฟรช
+                </button>
+              </div>
+
+              <div
+                id="historyBox"
+                class="flex-1 overflow-y-auto px-4 md:px-5 py-3 text-xs text-slate-700 whitespace-pre-wrap"
+              >
+                ยังไม่มี history
+              </div>
+            </aside>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const chatMessages = document.getElementById("chatMessages");
+      const chatInput = document.getElementById("chatInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const uploadBtn = document.getElementById("uploadBtn");
+      const fileInput = document.getElementById("fileInput");
+      const toggleHistoryBtn = document.getElementById("toggleHistoryBtn");
+      const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
+      const historyPanel = document.getElementById("historyPanel");
+      const historyBox = document.getElementById("historyBox");
+      const attachmentInfo = document.getElementById("attachmentInfo");
+
+      const modeSelect = document.getElementById("modeSelect");
+      const modeSelectMobile = document.getElementById("modeSelectMobile");
+
+      let historyVisible = false;
+      let attachedFile = null;
+
+      function getMode() {
+        const desktopValue = modeSelect.value;
+        const mobileValue = modeSelectMobile.value;
+        if (document.activeElement === modeSelectMobile) {
+          modeSelect.value = mobileValue;
+          return mobileValue;
+        }
+        modeSelectMobile.value = desktopValue;
+        return desktopValue;
+      }
+
+      function renderAttachment() {
+        if (!attachedFile) {
+          attachmentInfo.innerHTML = "";
+          return;
+        }
+        const name = attachedFile.name;
+        attachmentInfo.innerHTML = `
+          <span class="inline-flex items-center gap-1 rounded-full bg-sky-50 border border-sky-200 px-2.5 py-1">
+            <span class="text-sky-600 text-xs">📄 ${name}</span>
+            <button
+              id="removeAttachmentBtn"
+              class="ml-1 text-[11px] text-slate-500 hover:text-rose-500"
+              type="button"
+            >
+              ✕
+            </button>
+          </span>
+        `;
+        const btn = document.getElementById("removeAttachmentBtn");
+        if (btn) {
+          btn.onclick = () => {
+            attachedFile = null;
+            renderAttachment();
+          };
+        }
+      }
+
+      function appendMessage(role, text, options = {}) {
+        const wrapper = document.createElement("div");
+        wrapper.className =
+          "flex " + (role === "user" ? "justify-end" : "justify-start");
+
+        const bubble = document.createElement("div");
+        bubble.className =
+          "max-w-[80%] rounded-2xl px-3 py-2 text-sm shadow-sm " +
+          (role === "user"
+            ? "bg-gradient-to-r from-sky-500 to-indigo-500 text-white rounded-br-sm"
+            : "bg-white text-slate-800 border border-slate-100 rounded-bl-sm");
+
+        const label = document.createElement("div");
+        label.className =
+          "text-[10px] uppercase tracking-wide mb-1 " +
+          (role === "user" ? "text-sky-100/80" : "text-slate-400");
+        label.textContent = role === "user" ? "คุณ" : options.label || "AI";
+
+        const content = document.createElement("div");
+        content.className = "whitespace-pre-wrap";
+        content.textContent = text;
+
+        bubble.appendChild(label);
+        bubble.appendChild(content);
+
+        if (options.intent || (options.sources && options.sources.length)) {
+          const meta = document.createElement("div");
+          meta.className =
+            "mt-2 rounded-xl bg-slate-50/90 text-[11px] text-slate-500 px-2 py-1.5 border border-slate-100";
+
+          if (options.intent) {
+            const intentEl = document.createElement("div");
+            intentEl.textContent = "Intent: " + options.intent;
+            meta.appendChild(intentEl);
+          }
+
+          if (options.sources && options.sources.length) {
+            const title = document.createElement("div");
+            title.className = "font-medium mb-0.5";
+            title.textContent = "Sources:";
+            meta.appendChild(title);
+
+            const ul = document.createElement("ul");
+            ul.className = "list-disc ml-4 space-y-0.5";
+
+            options.sources.forEach((s) => {
+              const li = document.createElement("li");
+              const docId = s.doc_id || "-";
+              const page = s.page ?? "?";
+              const src = s.source || "-";
+              li.textContent = `doc=${docId}, page=${page}, source=${src}`;
+              ul.appendChild(li);
+            });
+
+            meta.appendChild(ul);
+          }
+
+          bubble.appendChild(meta);
+        }
+
+        wrapper.appendChild(bubble);
+        chatMessages.appendChild(wrapper);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      // --- ฟังก์ชัน uploadFileToBackend แก้ไขใหม่ ---
+      async function uploadFileToBackend(file, docId) {
+        const docType = "";
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("doc_id", docId);
+        formData.append("doc_type", docType);
+
+        // ยิงไปที่ Port 8000 ของ Backend
+        const res = await fetch("http://localhost:8000/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(
+            "อัปโหลดล้มเหลว (status " + res.status + "): " + text
+          );
+        }
+
+        return await res.json();
+      }
+
+      async function sendMessage() {
+        const text = chatInput.value.trim();
+
+        if (!text && !attachedFile) {
+          return;
+        }
+
+        const mode = getMode();
+
+        // copy / clear state attachment (กันส่งซ้ำ)
+        const fileToUpload = attachedFile;
+        attachedFile = null;
+        renderAttachment();
+
+        // แสดงข้อความผู้ใช้
+        if (text) {
+          appendMessage("user", text);
+        } else if (fileToUpload) {
+          appendMessage("user", `แนบไฟล์ ${fileToUpload.name}`);
+        }
+
+        chatInput.value = "";
+        chatInput.style.height = "auto";
+
+        // ถ้ามีไฟล์แนบ → รัน upload ก่อน
+        if (fileToUpload) {
+          try {
+            const defaultDocId = fileToUpload.name.replace(/\.[^.]+$/, "");
+            const docId =
+              prompt("กรอก doc_id สำหรับไฟล์นี้", defaultDocId) ||
+              defaultDocId;
+
+            appendMessage(
+              "assistant",
+              `กำลังอัปโหลดไฟล์ "${fileToUpload.name}" และรัน ingestion pipeline (doc_id=${docId}) ...`,
+              { label: "Upload" }
+            );
+
+            const uploadResult = await uploadFileToBackend(
+              fileToUpload,
+              docId
+            );
+
+            // แสดงผลสำเร็จ (เช็คก่อนว่ามี page_count หรือไม่)
+            const pageInfo = uploadResult.page_count ? `\n- page_count: ${uploadResult.page_count}` : "";
+            
+            appendMessage(
+              "assistant",
+              `อัปโหลดและประมวลผลสำเร็จ ✅\n- doc_id: ${uploadResult.doc_id}${pageInfo}\nตอนนี้คุณสามารถถามคำถามเกี่ยวกับเอกสารนี้ได้เลย`,
+              { label: "Upload" }
+            );
+          } catch (err) {
+            console.error(err);
+            appendMessage(
+              "assistant",
+              "เกิดข้อผิดพลาดระหว่างอัปโหลดไฟล์\n" + err.message,
+              { label: "Upload Error" }
+            );
+            // ถ้าอยากให้ลองใหม่ได้ ก็ restore แนบไฟล์
+            attachedFile = fileToUpload;
+            renderAttachment();
+            // ถ้าไม่มีข้อความคำถามก็จบที่นี่
+            if (!text) return;
+          }
+        }
+
+        // ถ้ามีข้อความ → เรียก /ask
+        if (text) {
+          appendMessage("assistant", "กำลังคิดคำตอบให้คุณ…", {
+            label: "กำลังประมวลผล",
+          });
+
+          try {
+            const payload = {
+              query: text,
+              doc_ids: null,
+              top_k: 5,
+              mode: mode,
+            };
+
+            // แก้ URL ให้ยิงไป Port 8000
+            const res = await fetch("http://localhost:8000/ask", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+            if (!res.ok) {
+              throw new Error(
+                "เรียก /ask ล้มเหลว (status " + res.status + ")"
+              );
+            }
+
+            const data = await res.json();
+
+            // ลบ bubble "กำลังคิด..." ตัวล่าสุด
+            chatMessages.removeChild(chatMessages.lastChild);
+
+            appendMessage(
+              "assistant",
+              data.answer || "(ไม่มีคำตอบ)",
+              {
+                label: "AI Assistant",
+                intent: data.intent,
+                sources: data.sources || [],
+              }
+            );
+          } catch (err) {
+            console.error(err);
+            // ลบ bubble "กำลังคิด..." ถ้ายังอยู่
+            if (chatMessages.lastChild.textContent.includes("กำลังคิด")) {
+               chatMessages.removeChild(chatMessages.lastChild);
+            }
+            appendMessage(
+              "assistant",
+              "เกิดข้อผิดพลาดระหว่างเรียก /ask\n" + err.message,
+              { label: "Error" }
+            );
+          }
+        }
+      }
+
+      async function loadHistory() {
+        try {
+          historyBox.textContent = "กำลังโหลด history...";
+          // แก้ URL ให้ยิงไป Port 8000
+          const res = await fetch(`http://localhost:8000/history?limit=50`);
+          if (!res.ok) {
+            historyBox.textContent =
+              "โหลด history ล้มเหลว (status " + res.status + ")";
+            return;
+          }
+
+          const data = await res.json();
+          if (!data.length) {
+            historyBox.textContent = "ยังไม่มี history";
+            return;
+          }
+
+          const lines = data.map((item, idx) => {
+            const ts = item.ts || "";
+            const q = item.query || "";
+            const a = item.answer || "";
+            const mode = item.mode || "auto";
+            const intent = item.intent || "-";
+            const docIds =
+              item.doc_ids && item.doc_ids.length
+                ? item.doc_ids.join(", ")
+                : "(ทุกเอกสาร)";
+            return [
+              `#${idx + 1} [${ts}]`,
+              `mode=${mode}, intent=${intent}`,
+              `doc_ids=${docIds}`,
+              `Q: ${q}`,
+              `A: ${a}`,
+            ].join("\n");
+          });
+
+          historyBox.textContent = lines.join("\n\n");
+        } catch (err) {
+          console.error(err);
+          historyBox.textContent =
+            "เออเรอร์ตอนโหลด history\n" + err.message;
+        }
+      }
+
+      function showHistoryPanel() {
+        historyVisible = true;
+        historyPanel.classList.remove("hidden");
+        requestAnimationFrame(() => {
+          historyPanel.classList.remove(
+            "opacity-0",
+            "translate-x-4",
+            "pointer-events-none"
+          );
+        });
+        loadHistory();
+      }
+
+      function hideHistoryPanel() {
+        historyVisible = false;
+        historyPanel.classList.add(
+          "opacity-0",
+          "translate-x-4",
+          "pointer-events-none"
+        );
+        setTimeout(() => {
+          if (!historyVisible) {
+            historyPanel.classList.add("hidden");
+          }
+        }, 250);
+      }
+
+      // Events
+      sendBtn.onclick = () => sendMessage();
+
+      chatInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      chatInput.addEventListener("input", () => {
+        chatInput.style.height = "auto";
+        chatInput.style.height =
+          Math.min(chatInput.scrollHeight, 140) + "px";
+      });
+
+      uploadBtn.onclick = () => fileInput.click();
+
+      fileInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          attachedFile = file;
+          renderAttachment();
+        }
+        fileInput.value = "";
+      };
+
+      toggleHistoryBtn.onclick = () => {
+        if (historyVisible) {
+          hideHistoryPanel();
+        } else {
+          showHistoryPanel();
+        }
+      };
+
+      refreshHistoryBtn.onclick = () => loadHistory();
+
+      // initial welcome message
+      appendMessage(
+        "assistant",
+        "สวัสดี 👋\nคุณสามารถ:\n- พิมพ์คำถามเกี่ยวกับเอกสารที่ ingest แล้ว\n- กดปุ่ม “แนบไฟล์ PDF” เพื่อแนบเอกสารใหม่ แล้วกดส่งเพื่อให้ระบบรัน ingestion + cleaning + enrich + index ให้อัตโนมัติ\n",
+        { label: "AI Assistant" }
+      );
+    </script>
+  </body>
+</html>

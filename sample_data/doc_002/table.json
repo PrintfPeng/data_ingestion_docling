@@ -1,0 +1,32 @@
+[
+    {
+      "id": "tbl_001",
+      "doc_type": "credit_card_statement",
+      "doc_id": "doc_002",
+      "page": 2,
+      "name": "transactions_dec_2025",
+      "columns": ["date", "description", "amount", "type"],
+      "rows": [
+        ["2025-12-05", "ชำระค่าสินค้าออนไลน์ Shopee", "-1500.00", "purchase"],
+        ["2025-12-10", "รูดบัตรที่ห้างสรรพสินค้า", "-4200.00", "purchase"],
+        ["2025-12-15", "ชำระคืนบางส่วนผ่าน Mobile Banking", "2000.00", "payment"]
+      ],
+      "bbox": [10.0, 200.0, 500.0, 420.0]
+    },
+    {
+      "id": "tbl_002",
+      "doc_type": "credit_card_statement",
+      "doc_id": "doc_002",
+      "page": 3,
+      "name": "billing_summary",
+      "columns": ["item", "amount"],
+      "rows": [
+        ["ยอดค้างชำระเดือนก่อน", "3,000.00"],
+        ["ยอดใช้จ่ายใหม่ในรอบนี้", "5,500.00"],
+        ["ยอดที่ต้องชำระทั้งหมด", "8,500.00"],
+        ["ยอดชำระขั้นต่ำ", "2,000.00"]
+      ],
+      "bbox": [10.0, 100.0, 400.0, 260.0]
+    }
+  ]
+  

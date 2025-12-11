@@ -1,0 +1,12 @@
+[
+    {
+      "id": "txt_001",
+      "doc_type": "bank_statement",
+      "doc_id": "doc_001",
+      "page": 1,
+      "section": "summary",
+      "content": "ยอดคงเหลือรวมสิ้นงวด 5,000 บาท",
+      "bbox": [0.0, 0.0, 100.0, 20.0]
+    }
+  ]
+  

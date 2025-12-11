@@ -1,0 +1,71 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+*.log
+
+# --- Virtual environment ---
+venv/
+ENV/
+env/
+.venv/
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS Files ---
+.DS_Store
+Thumbs.db
+
+# --- Credentials / Environment ---
+
+*.key
+*.pem
+
+# --- Project Generated Data ---
+ingested/
+output/
+tmp/
+cache/
+logs/
+
+# --- PDF / Samples (avoid uploading private docs) ---
+samples/
+*.pdf
+
+# --- Google Gemini Cache ---
+.gemini/
+
+# --- Jupyter / Notebooks (if used later) ---
+.ipynb_checkpoints
+
+# --- PyTest / Coverage ---
+.coverage
+.cache
+pytest_cache/
+htmlcov/
+
+# --- Build ---
+build/
+dist/
+
+__pycache__/
+*.pyc
+chroma_db/
+ingested/
+
+
+# env & local config
+.env
+
+# python cache
+__pycache__/
+*.pyc
+
+# local vector DB
+chroma_db/
