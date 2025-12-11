@@ -1,5 +1,7 @@
 📄 AI Data Ingestion Pipeline
 
+//////////////////////////////
+
 Automatic PDF → Text → Clean → Semantic Enrich Pipeline (Gemini Powered)
 
 ระบบนี้ถูกออกแบบมาเพื่อช่วยองค์กรในการ แปลงข้อมูลจาก PDF ให้เป็นข้อมูลเชิงโครงสร้าง (structured data) พร้อมการทำ OCR, Cleaning, Table Extraction และ Semantic Enrichment โดยใช้ Google Gemini 2.5 Flash ทำให้สามารถนำข้อมูลไปใช้งานต่อได้ง่าย เช่นส่งเข้า Database, ทำ Data Analysis หรือสร้าง Knowledge Base
