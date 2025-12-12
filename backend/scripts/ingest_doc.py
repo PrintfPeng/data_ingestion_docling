@@ -16,8 +16,6 @@ from backend.services.vector_store import index_chunks, search_similar
 # -------------------------------------------------------------------
 # CONFIG
 # -------------------------------------------------------------------
-# ถ้าอยาก fix รายการ doc เอง ให้ใส่ใน DOCS
-# ถ้าปล่อย [] ไว้ จะ auto-scan จากโฟลเดอร์ ingested/
 DOCS: list[tuple[str, str]] = []
 
 
@@ -25,19 +23,6 @@ DOCS: list[tuple[str, str]] = []
 # Helper: ค้นหา doc ทั้งหมดจากโฟลเดอร์ ingested/
 # -------------------------------------------------------------------
 def discover_docs_from_ingested(root: str = "ingested") -> list[tuple[str, str]]:
-    """
-    สแกนหาเอกสารจากโฟลเดอร์ ingested/
-    โครงสร้างที่คาดหวัง:
-        ingested/
-          doc_001/
-            metadata.json
-            text.json / text_clean.json / text_enriched.json
-            table.json / table_clean.json / table_normalized.json
-            image.json
-          doc_002/
-            ...
-    คืนค่าเป็น list ของ (doc_id, base_dir)
-    """
     base = Path(root)
     if not base.exists():
         print(f"[WARN] โฟลเดอร์ '{root}' ยังไม่มี (ให้ฝั่ง Peng รัน ingestion ก่อน)")
@@ -52,9 +37,6 @@ def discover_docs_from_ingested(root: str = "ingested") -> list[tuple[str, str]]
 
 
 def get_docs_to_ingest() -> list[tuple[str, str]]:
-    """
-    เลือกว่าจะใช้ DOCS แบบ fix เอง หรือ auto-discover จาก ingested/
-    """
     if DOCS:
         print("[INFO] ใช้รายการ DOCS ที่กำหนดไว้ในสคริปต์")
         return DOCS
@@ -70,19 +52,6 @@ def get_docs_to_ingest() -> list[tuple[str, str]]:
 # Helper: เช็คว่าโฟลเดอร์ ingested/<doc_id> มีไฟล์ "พอใช้ได้" ไหม
 # -------------------------------------------------------------------
 def check_ingested_folder(base_dir: str, doc_id: str) -> bool:
-    """
-    เช็คเบื้องต้นว่าโฟลเดอร์ ingested/<doc_id>/ นี้พอจะโหลดได้ไหม
-    เราจะไม่บังคับทุกไฟล์ raw ต้องมีครบ แต่ใช้เกณฑ์:
-
-    - metadata.json ต้องมี
-    - TEXT: ต้องมีอย่างน้อย 1 ใน 3:
-        text_enriched.json, text_clean.json, text.json
-    - TABLE: ต้องมีอย่างน้อย 1 ใน 3:
-        table_normalized.json, table_clean.json, table.json
-    - IMAGE: ต้องมี image.json
-
-    ถ้าขาดอะไรไป → return False แล้วให้ caller ข้าม doc นี้
-    """
     base_path = Path(base_dir)
 
     meta_path = base_path / "metadata.json"
@@ -138,26 +107,21 @@ def main():
     for doc_id, base_dir in docs_to_ingest:
         print(f"\n[DOC] {doc_id} from {base_dir}")
 
-        # 1) pre-check โฟลเดอร์ว่ามีไฟล์พอใช้ไหม
         if not check_ingested_folder(base_dir, doc_id):
-            # ถ้าไม่ครบ → ข้าม doc นี้ไป
             continue
 
-        # 2) ลองโหลด DocumentBundle
         try:
             bundle = load_document_bundle(base_dir, doc_id)
         except FileNotFoundError as e:
             print(f"[ERROR] skip doc_id={doc_id}: file not found -> {e}")
             continue
         except ValueError as e:
-            # เช่น metadata.doc_id != doc_id แล้วคุณอยาก skip ไปเลย
             print(f"[ERROR] skip doc_id={doc_id}: value error -> {e}")
             continue
         except Exception as e:
             print(f"[ERROR] skip doc_id={doc_id}: unexpected error -> {e}")
             continue
 
-        # 3) แปลงเป็น chunks
         text_chunks = text_items_to_chunks(bundle)
         table_chunks = table_items_to_chunks(bundle)
         image_chunks = image_items_to_chunks(bundle)
@@ -171,7 +135,9 @@ def main():
 
         if doc_chunks:
             all_chunks.extend(doc_chunks)
-            ingested_doc_ids.append(doc_id)
+            # --- FIX: ใช้ ID จริงจาก Metadata แทนชื่อโฟลเดอร์ ---
+            real_id = bundle.metadata.doc_id
+            ingested_doc_ids.append(real_id)
         else:
             print(f"[WARN] doc_id={doc_id} ไม่มี chunks เลย → ข้ามจากการ index")
 
@@ -182,27 +148,20 @@ def main():
 
     print(f"\n[SUMMARY] total chunks from all docs: {len(all_chunks)}")
 
-    # 4) index chunks ทั้งหมดเข้า Chroma
     index_chunks(all_chunks)
     print("\nIndexed all chunks into Chroma.")
 
-    # 5) ทดลอง search เบื้องต้น (ถ้ามี doc_id ที่ ingest สำเร็จ)
     if not ingested_doc_ids:
         print("\n[INFO] ไม่มี doc ไหน ingest สำเร็จ → ข้าม test search")
         print("\n=== Ingestion: done ===")
         return
 
-    # พยายามหา doc_001 / doc_002 ใน list ถ้ามีก็ใช้
+    # Test Search Logic
     test_queries: list[tuple[str, list[str]]] = []
 
-    if "doc_001" in ingested_doc_ids:
-        test_queries.append(("ยอดคงเหลือรวมสิ้นงวด", ["doc_001"]))
-    if "doc_002" in ingested_doc_ids:
-        test_queries.append(("ยอดที่ต้องชำระทั้งหมด", ["doc_002"]))
-
-    if not test_queries:
-        # fallback: ใช้ doc แรกในลิสต์
-        test_queries.append(("ยอดคงเหลือรวมสิ้นงวด", [ingested_doc_ids[0]]))
+    # ลองสุ่มหาจาก doc ตัวแรกที่ ingest สำเร็จ
+    first_doc = ingested_doc_ids[0]
+    test_queries.append(("ยอดคงเหลือรวมสิ้นงวด", [first_doc]))
 
     for query, doc_ids in test_queries:
         print("\n" + "=" * 60)
@@ -216,7 +175,7 @@ def main():
 
         for i, doc in enumerate(docs, start=1):
             print(f"\nResult #{i}")
-            print("  content :", doc.page_content)
+            print("  content :", doc.page_content[:200] + "...")
             print("  metadata:", doc.metadata)
 
     print("\n=== Ingestion: done ===")
