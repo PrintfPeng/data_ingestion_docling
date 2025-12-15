@@ -1,378 +1,489 @@
 <!doctype html>
 <html lang="th">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>AI Data Ingestion – Smart Chat</title>
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Sarabun:wght@300;400;500;600&display=swap" rel="stylesheet">
 
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: { sans: ['Sarabun', 'Inter', 'sans-serif'] },
-            colors: {
-              brand: { 50:'#f0f9ff', 100:'#e0f2fe', 200:'#bae6fd', 300:'#7dd3fc', 400:'#38bdf8', 500:'#0ea5e9', 600:'#0284c7', 700:'#0369a1', 800:'#075985', 900:'#0c4a6e' }
-            }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>AI Data Ingestion – Smart Chat</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Sarabun:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Sarabun', 'Inter', 'sans-serif'] },
+          colors: {
+            brand: { 50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc', 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1', 800: '#075985', 900: '#0c4a6e' }
           }
         }
       }
-    </script>
+    }
+  </script>
 
-    <style>
-      ::-webkit-scrollbar { width: 5px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      .msg-animate { animation: fadeIn 0.3s ease-out forwards; }
-      .glass-header { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); }
-      .glass-input { background: linear-gradient(to top, rgba(248,250,252, 1) 0%, rgba(248,250,252, 0.9) 60%, rgba(248,250,252, 0) 100%); pointer-events: none; }
-      .glass-input > div { pointer-events: auto; }
-    </style>
-  </head>
-  <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden font-sans selection:bg-brand-100 selection:text-brand-900">
+  <style>
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
 
-    <header class="glass-header border-b border-slate-200 z-30 h-16 flex-none shadow-sm absolute top-0 w-full">
-      <div class="max-w-5xl mx-auto px-4 h-full flex items-center justify-between">
-        
-        <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-indigo-600 flex items-center justify-center text-white shadow-lg">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
-          </div>
-          <div>
-            <h1 class="text-lg font-bold text-slate-800 leading-none">AI Ingestion</h1>
-            <p class="text-[10px] text-slate-500 font-medium tracking-wide mt-1">SMART RAG ASSISTANT</p>
-          </div>
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 10px;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .msg-animate {
+      animation: fadeIn 0.3s ease-out forwards;
+    }
+
+    .glass-header {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+    }
+
+    .glass-input {
+      background: linear-gradient(to top, rgba(248, 250, 252, 1) 0%, rgba(248, 250, 252, 0.9) 60%, rgba(248, 250, 252, 0) 100%);
+      pointer-events: none;
+    }
+
+    .glass-input>div {
+      pointer-events: auto;
+    }
+  </style>
+</head>
+
+<body
+  class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden font-sans selection:bg-brand-100 selection:text-brand-900">
+
+  <header class="glass-header border-b border-slate-200 z-30 h-16 flex-none shadow-sm absolute top-0 w-full">
+    <div class="max-w-6xl mx-auto px-4 h-full flex items-center justify-between">
+
+      <div class="flex items-center gap-3">
+        <div
+          class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-indigo-600 flex items-center justify-center text-white shadow-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"
+            class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round"
+              d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
         </div>
-
-        <div class="flex items-center gap-3">
-          <div class="relative group hidden md:block">
-             <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
-             </div>
-             <select id="docSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none cursor-pointer hover:bg-white hover:border-slate-300 transition shadow-sm w-40 truncate">
-                <option value="">📚 ค้นหาทุกเอกสาร (All)</option>
-             </select>
-             <div class="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-slate-400">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-             </div>
-          </div>
-
-          <div class="relative group hidden md:block">
-            <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
-               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-            </div>
-            <select id="modeSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none cursor-pointer hover:bg-white hover:border-slate-300 transition shadow-sm">
-              <option value="auto">Auto Mode</option>
-              <option value="text">Text Only</option>
-              <option value="table">Table Only</option>
-              <option value="both">Both</option>
-            </select>
-            <div class="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-slate-400">
-               <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-            </div>
-          </div>
-
-          <button id="toggleHistoryBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 hover:border-brand-200 transition shadow-sm active:scale-95 group">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-          </button>
+        <div>
+          <h1 class="text-lg font-bold text-slate-800 leading-none">AI Ingestion</h1>
+          <p class="text-[10px] text-slate-500 font-medium tracking-wide mt-1">SMART RAG ASSISTANT</p>
         </div>
       </div>
-    </header>
 
-    <div class="flex-1 flex overflow-hidden relative pt-16">
-      <main class="flex-1 flex flex-col relative min-w-0 bg-slate-50/50">
-        
-        <div id="chatMessages" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth pb-80">
+      <div class="flex items-center gap-3">
+        <div class="relative group hidden md:block">
+          <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+              stroke="currentColor" class="w-3.5 h-3.5">
+              <path stroke-linecap="round" stroke-linejoin="round"
+                d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+            </svg>
           </div>
-
-        <div class="glass-input absolute bottom-0 left-0 w-full p-4 md:p-6 z-10">
-          <div class="max-w-4xl mx-auto">
-            <div id="attachmentInfo" class="mb-2 min-h-[24px]"></div>
-            <div class="relative bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 focus-within:ring-2 focus-within:ring-brand-100 focus-within:border-brand-400 transition-all duration-300">
-              <textarea id="chatInput" rows="1" class="block w-full py-4 pl-12 pr-14 bg-transparent border-none resize-none focus:ring-0 text-slate-700 placeholder-slate-400 leading-relaxed max-h-48 text-sm md:text-base rounded-2xl" placeholder="พิมพ์คำถามของคุณที่นี่..."></textarea>
-              <button id="uploadBtn" class="absolute left-2 bottom-2.5 p-2 text-slate-400 hover:text-brand-600 hover:bg-slate-50 rounded-xl transition group">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 group-hover:scale-110 transition-transform"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" /></svg>
-                <input id="fileInput" type="file" accept="application/pdf" class="hidden" />
-              </button>
-              <button id="sendBtn" class="absolute right-2 bottom-2.5 flex items-center justify-center w-9 h-9 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 text-white rounded-xl shadow-md transition-all active:scale-95">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 translate-x-0.5"><path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.89 28.89 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" /></svg>
-              </button>
-            </div>
-            
-            <div class="md:hidden flex justify-center mt-3 gap-2">
-                 <select id="docSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-slate-600 rounded-full px-3 py-1 outline-none shadow-sm max-w-[150px] truncate">
-                    <option value="">📚 All Docs</option>
-                 </select>
-                 <select id="modeSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-brand-600 rounded-full px-3 py-1 outline-none shadow-sm">
-                    <option value="auto">Auto</option>
-                    <option value="text">Text</option>
-                    <option value="table">Table</option>
-                    <option value="both">Both</option>
-                 </select>
-            </div>
+          <select id="docSelect"
+            class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none cursor-pointer hover:bg-white hover:border-slate-300 transition shadow-sm w-40 truncate">
+            <option value="">📚 ค้นหาทุกเอกสาร (All)</option>
+          </select>
+          <div class="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-slate-400">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+            </svg>
           </div>
         </div>
-      </main>
 
-      <aside id="historyPanel" class="absolute top-0 right-0 h-full w-full sm:w-[360px] bg-white border-l border-slate-200 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-40 flex flex-col pt-16">
-        <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-          <div class="flex items-center gap-2 text-slate-700">
-            <div class="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
-            <div><h2 class="font-bold text-sm">History</h2><p class="text-[10px] text-slate-400">ประวัติการสนทนาล่าสุด</p></div>
+        <div class="relative group hidden md:block">
+          <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+              </path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
           </div>
-          <div class="flex gap-1">
-            <button id="refreshHistoryBtn" class="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg></button>
-            <button onclick="hideHistoryPanel()" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+          <select id="modeSelect"
+            class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none cursor-pointer hover:bg-white hover:border-slate-300 transition shadow-sm">
+            <option value="auto">Auto Mode</option>
+            <option value="text">Text Only</option>
+            <option value="table">Table Only</option>
+            <option value="both">Both</option>
+          </select>
+          <div class="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-slate-400">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+            </svg>
           </div>
         </div>
-        <div id="historyBox" class="flex-1 overflow-y-auto p-4 text-xs space-y-3 bg-white"><p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p></div>
-      </aside>
+
+        <button id="toggleHistoryBtn"
+          class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 hover:border-brand-200 transition shadow-sm active:scale-95 group">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none"
+            viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
+      </div>
     </div>
+  </header>
 
-    <script>
-      const chatMessages = document.getElementById("chatMessages");
-      const chatInput = document.getElementById("chatInput");
-      const sendBtn = document.getElementById("sendBtn");
-      const uploadBtn = document.getElementById("uploadBtn");
-      const fileInput = document.getElementById("fileInput");
-      const toggleHistoryBtn = document.getElementById("toggleHistoryBtn");
-      const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
-      const historyPanel = document.getElementById("historyPanel");
-      const historyBox = document.getElementById("historyBox");
-      const attachmentInfo = document.getElementById("attachmentInfo");
-      const modeSelect = document.getElementById("modeSelect");
-      const docSelect = document.getElementById("docSelect");
-      const modeSelectMobile = document.getElementById("modeSelectMobile");
-      const docSelectMobile = document.getElementById("docSelectMobile");
+  <div class="flex-1 flex overflow-hidden relative pt-16">
+    <main class="flex-1 flex flex-col relative min-w-0 bg-slate-50/50">
 
-      let historyVisible = false;
-      let attachedFile = null;
+      <div id="chatMessages" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth pb-96">
+      </div>
 
-      async function fetchDocuments() {
+      <div class="glass-input absolute bottom-0 left-0 w-full p-4 md:p-6 z-10">
+        <div class="max-w-4xl mx-auto">
+          <div id="attachmentInfo" class="mb-2 min-h-[24px]"></div>
+          <div
+            class="relative bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 focus-within:ring-2 focus-within:ring-brand-100 focus-within:border-brand-400 transition-all duration-300">
+            <textarea id="chatInput" rows="1"
+              class="block w-full py-4 pl-12 pr-14 bg-transparent border-none resize-none focus:ring-0 text-slate-700 placeholder-slate-400 leading-relaxed max-h-48 text-sm md:text-base rounded-2xl"
+              placeholder="พิมพ์คำถามของคุณที่นี่..."></textarea>
+            <button id="uploadBtn"
+              class="absolute left-2 bottom-2.5 p-2 text-slate-400 hover:text-brand-600 hover:bg-slate-50 rounded-xl transition group">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                stroke="currentColor" class="w-5 h-5 group-hover:scale-110 transition-transform">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+              </svg>
+              <input id="fileInput" type="file" accept="application/pdf" class="hidden" />
+            </button>
+            <button id="sendBtn"
+              class="absolute right-2 bottom-2.5 flex items-center justify-center w-9 h-9 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 text-white rounded-xl shadow-md transition-all active:scale-95">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                class="w-4 h-4 translate-x-0.5">
+                <path
+                  d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.89 28.89 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="md:hidden flex justify-center mt-3 gap-2">
+            <select id="docSelectMobile"
+              class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-slate-600 rounded-full px-3 py-1 outline-none shadow-sm max-w-[150px] truncate">
+              <option value="">📚 All Docs</option>
+            </select>
+            <select id="modeSelectMobile"
+              class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-brand-600 rounded-full px-3 py-1 outline-none shadow-sm">
+              <option value="auto">Auto</option>
+              <option value="text">Text</option>
+              <option value="table">Table</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <aside id="historyPanel"
+      class="absolute top-0 right-0 h-full w-full sm:w-[360px] bg-white border-l border-slate-200 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-40 flex flex-col pt-16">
+      <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div class="flex items-center gap-2 text-slate-700">
+          <div class="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center"><svg
+              class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg></div>
+          <div>
+            <h2 class="font-bold text-sm">History</h2>
+            <p class="text-[10px] text-slate-400">ประวัติการสนทนาล่าสุด</p>
+          </div>
+        </div>
+        <div class="flex gap-1">
+          <button id="refreshHistoryBtn"
+            class="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition"><svg
+              xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"
+              class="w-4 h-4">
+              <path stroke-linecap="round" stroke-linejoin="round"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg></button>
+          <button onclick="hideHistoryPanel()"
+            class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><svg
+              xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"
+              class="w-4 h-4">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg></button>
+        </div>
+      </div>
+      <div id="historyBox" class="flex-1 overflow-y-auto p-4 text-xs space-y-3 bg-white">
+        <p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const chatMessages = document.getElementById("chatMessages");
+    const chatInput = document.getElementById("chatInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const fileInput = document.getElementById("fileInput");
+    const toggleHistoryBtn = document.getElementById("toggleHistoryBtn");
+    const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
+    const historyPanel = document.getElementById("historyPanel");
+    const historyBox = document.getElementById("historyBox");
+    const attachmentInfo = document.getElementById("attachmentInfo");
+
+    const modeSelect = document.getElementById("modeSelect");
+    const docSelect = document.getElementById("docSelect");
+    const modeSelectMobile = document.getElementById("modeSelectMobile");
+    const docSelectMobile = document.getElementById("docSelectMobile");
+
+    let historyVisible = false;
+    let attachedFile = null;
+
+    async function fetchDocuments() {
+      try {
+        const res = await fetch("/documents");
+        if (!res.ok) return;
+        const data = await res.json();
+        const docs = data.documents || [];
+
+        const currentVal = docSelect.value;
+
+        [docSelect, docSelectMobile].forEach(sel => {
+          sel.innerHTML = '<option value="">📚 ค้นหาทุกเอกสาร (All)</option>';
+          docs.forEach(doc => {
+            const opt = document.createElement("option");
+            opt.value = doc;
+            opt.text = `📄 ${doc}`;
+            sel.add(opt);
+          });
+          if (docs.includes(currentVal)) {
+            sel.value = currentVal;
+          }
+        });
+      } catch (e) {
+        console.error("Failed to load documents:", e);
+      }
+    }
+
+    function getMode() {
+      if (window.innerWidth < 768) {
+        modeSelect.value = modeSelectMobile.value;
+        return modeSelectMobile.value;
+      }
+      modeSelectMobile.value = modeSelect.value;
+      return modeSelect.value;
+    }
+
+    function getSelectedDocId() {
+      if (window.innerWidth < 768) {
+        docSelect.value = docSelectMobile.value;
+        return docSelectMobile.value;
+      }
+      docSelectMobile.value = docSelect.value;
+      return docSelect.value;
+    }
+
+    function showHistoryPanel() { historyVisible = true; historyPanel.classList.remove("translate-x-full"); loadHistory(); }
+    function hideHistoryPanel() { historyVisible = false; historyPanel.classList.add("translate-x-full"); }
+
+    function renderAttachment() {
+      if (!attachedFile) { attachmentInfo.innerHTML = ""; return; }
+      attachmentInfo.innerHTML = `<div class="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-700 rounded-lg text-xs font-semibold border border-brand-100 shadow-sm animate-fadeIn"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg><span class="truncate max-w-[200px]">${attachedFile.name}</span><button id="removeAttachmentBtn" class="ml-1 p-0.5 hover:bg-white hover:text-red-500 rounded-full transition">✕</button></div>`;
+      document.getElementById("removeAttachmentBtn").onclick = () => { attachedFile = null; fileInput.value = ""; renderAttachment(); };
+    }
+
+    function appendMessage(role, text, options = {}) {
+      const isUser = role === "user";
+      const wrapper = document.createElement("div");
+      wrapper.className = `flex w-full mb-6 msg-animate ${isUser ? "justify-end" : "justify-start"}`;
+
+      const avatar = document.createElement("div");
+      avatar.className = `flex-none w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shadow-sm ${isUser ? "bg-brand-600 text-white order-2 ml-3" : "bg-white border border-slate-200 text-brand-600 order-1 mr-3"}`;
+      avatar.innerHTML = isUser ? '<svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" /></svg>' : '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>';
+
+      const bubble = document.createElement("div");
+      bubble.className = `relative max-w-[85%] md:max-w-[75%] px-5 py-3.5 text-sm leading-relaxed shadow-sm ${isUser ? "bg-brand-600 text-white rounded-2xl rounded-tr-sm order-1" : "bg-white border border-slate-100 text-slate-700 rounded-2xl rounded-tl-sm order-2"}`;
+
+      const content = document.createElement("div");
+      content.className = "whitespace-pre-wrap font-sans";
+      content.textContent = text;
+      bubble.appendChild(content);
+
+      // [FIX 2] ซ่อน Sources ไว้ในปุ่ม Toggle
+      if (!isUser && (options.intent || (options.sources && options.sources.length))) {
+        const meta = document.createElement("div");
+        meta.className = "mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2";
+
+        if (options.intent) {
+          meta.innerHTML += `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-100 w-fit">Intent: ${options.intent}</span>`;
+        }
+
+        if (options.sources && options.sources.length) {
+          // สร้าง unique ID สำหรับ toggle
+          const sourceId = 'source-' + Math.random().toString(36).substr(2, 9);
+
+          // สร้างปุ่มกด
+          const toggleBtn = document.createElement("button");
+          toggleBtn.className = "text-[10px] font-bold text-slate-400 hover:text-brand-600 transition flex items-center gap-1 mt-1 bg-slate-50 px-2 py-1 rounded border border-slate-100 w-fit";
+          toggleBtn.innerHTML = `<span>▶ แสดงแหล่งที่มา (Sources)</span>`;
+          toggleBtn.onclick = () => {
+            const el = document.getElementById(sourceId);
+            if (el.classList.contains('hidden')) {
+              el.classList.remove('hidden');
+              toggleBtn.innerHTML = `<span>▼ ซ่อนแหล่งที่มา</span>`;
+            } else {
+              el.classList.add('hidden');
+              toggleBtn.innerHTML = `<span>▶ แสดงแหล่งที่มา (Sources)</span>`;
+            }
+          };
+          meta.appendChild(toggleBtn);
+
+          // สร้างกล่องเก็บ Sources (ซ่อนไว้ก่อน)
+          const sourceContainer = document.createElement("div");
+          sourceContainer.id = sourceId;
+          sourceContainer.className = "hidden mt-2 bg-slate-50 rounded-lg p-2.5 text-xs text-slate-500 border border-slate-100/80 transition-all duration-200 ease-in-out";
+
+          const ul = document.createElement("ul");
+          ul.className = "space-y-1.5 pl-1";
+          options.sources.forEach(s => {
+            const li = document.createElement("li");
+            li.className = "flex gap-2 items-start";
+            li.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-brand-400 mt-1.5 flex-none"></span><span class="opacity-90 break-all"><span class="font-semibold text-slate-700">Doc:</span> ${s.doc_id || "?"} <span class="text-slate-300">|</span> <span class="font-semibold text-slate-700">Page:</span> ${s.page || "?"} <span class="text-slate-300">|</span> <span class="italic text-slate-400">${s.source || "text"}</span></span>`;
+            ul.appendChild(li);
+          });
+          sourceContainer.appendChild(ul);
+          meta.appendChild(sourceContainer);
+        }
+        bubble.appendChild(meta);
+      }
+
+      wrapper.appendChild(avatar); wrapper.appendChild(bubble); chatMessages.appendChild(wrapper);
+
+      // [FIX 3] สร้าง Dummy Element เพื่อดัน Scroll ให้สุดจริงๆ
+      // แก้ปัญหาข้อความเบลอหรือจมใต้ Input
+      const dummy = document.createElement("div");
+      dummy.style.height = "100px";
+      flexShrink = "0";
+      chatMessages.appendChild(dummy);
+
+      setTimeout(() => {
+        dummy.scrollIntoView({ behavior: "smooth", block: "end" });
+      }, 100);
+    }
+
+    async function uploadFileToBackend(file, docId) {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("doc_id", docId);
+      formData.append("doc_type", "");
+      const res = await fetch("/upload", { method: "POST", body: formData });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    async function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text && !attachedFile) return;
+      const mode = getMode();
+      const selectedDoc = getSelectedDocId();
+      const fileToUpload = attachedFile;
+      attachedFile = null;
+      renderAttachment();
+
+      if (text) appendMessage("user", text);
+      else if (fileToUpload) appendMessage("user", `📎 แนบไฟล์: ${fileToUpload.name}`);
+      chatInput.value = ""; chatInput.style.height = "auto";
+
+      if (fileToUpload) {
         try {
-            const res = await fetch("/documents");
-            if(!res.ok) return;
-            const data = await res.json();
-            const docs = data.documents || [];
-            const currentVal = docSelect.value;
-            [docSelect, docSelectMobile].forEach(sel => {
-                sel.innerHTML = '<option value="">📚 ค้นหาทุกเอกสาร (All)</option>';
-                docs.forEach(doc => {
-                    const opt = document.createElement("option");
-                    opt.value = doc;
-                    opt.text = `📄 ${doc}`;
-                    sel.add(opt);
-                });
-                if(docs.includes(currentVal)) {
-                    sel.value = currentVal;
-                }
-            });
-        } catch (e) {
-            console.error("Failed to load documents:", e);
+          const defaultDocId = fileToUpload.name.replace(/\.[^.]+$/, "");
+          const docId = prompt("ตั้งชื่อ Doc ID:", defaultDocId) || defaultDocId;
+          appendMessage("assistant", `⏳ กำลังอัปโหลด... (ID: ${docId})`, { label: "System" });
+          const res = await uploadFileToBackend(fileToUpload, docId);
+          appendMessage("assistant", `✅ อัปโหลดสำเร็จ! Pages: ${res.page_count}`, { label: "System" });
+          fetchDocuments();
+        } catch (err) {
+          console.error(err);
+          appendMessage("assistant", "❌ Error: " + err.message, { label: "Error" });
+          attachedFile = fileToUpload; renderAttachment();
+          if (!text) return;
         }
       }
 
-      function getMode() {
-        if(window.innerWidth < 768) {
-            modeSelect.value = modeSelectMobile.value;
-            return modeSelectMobile.value;
-        }
-        modeSelectMobile.value = modeSelect.value;
-        return modeSelect.value;
-      }
+      if (text) {
+        const loadingId = "loading-" + Date.now();
+        const loadingWrapper = document.createElement("div");
+        loadingWrapper.id = loadingId;
+        loadingWrapper.className = "flex w-full mb-6 justify-start msg-animate";
+        loadingWrapper.innerHTML = `<div class="flex-none w-8 h-8 rounded-full bg-white border border-slate-200 text-brand-600 flex items-center justify-center mr-3 shadow-sm"><svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div><div class="bg-white border border-slate-100 text-slate-500 rounded-2xl rounded-tl-sm px-5 py-3.5 shadow-sm text-sm">กำลังค้นหาคำตอบ...</div>`;
+        chatMessages.appendChild(loadingWrapper);
 
-      function getSelectedDocId() {
-        if(window.innerWidth < 768) {
-            docSelect.value = docSelectMobile.value;
-            return docSelectMobile.value;
-        }
-        docSelectMobile.value = docSelect.value;
-        return docSelect.value;
-      }
+        // Scroll to Loading
+        requestAnimationFrame(() => loadingWrapper.scrollIntoView({ behavior: "smooth", block: "end" }));
 
-      function showHistoryPanel() { historyVisible = true; historyPanel.classList.remove("translate-x-full"); loadHistory(); }
-      function hideHistoryPanel() { historyVisible = false; historyPanel.classList.add("translate-x-full"); }
-
-      function renderAttachment() {
-        if (!attachedFile) { attachmentInfo.innerHTML = ""; return; }
-        attachmentInfo.innerHTML = `<div class="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-700 rounded-lg text-xs font-semibold border border-brand-100 shadow-sm animate-fadeIn"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg><span class="truncate max-w-[200px]">${attachedFile.name}</span><button id="removeAttachmentBtn" class="ml-1 p-0.5 hover:bg-white hover:text-red-500 rounded-full transition">✕</button></div>`;
-        document.getElementById("removeAttachmentBtn").onclick = () => { attachedFile = null; fileInput.value = ""; renderAttachment(); };
-      }
-
-      function appendMessage(role, text, options = {}) {
-        const isUser = role === "user";
-        const wrapper = document.createElement("div");
-        wrapper.className = `flex w-full mb-6 msg-animate ${isUser ? "justify-end" : "justify-start"}`;
-        
-        const avatar = document.createElement("div");
-        avatar.className = `flex-none w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shadow-sm ${isUser ? "bg-brand-600 text-white order-2 ml-3" : "bg-white border border-slate-200 text-brand-600 order-1 mr-3"}`;
-        avatar.innerHTML = isUser ? '<svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" /></svg>' : '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>';
-
-        const bubble = document.createElement("div");
-        bubble.className = `relative max-w-[85%] md:max-w-[75%] px-5 py-3.5 text-sm leading-relaxed shadow-sm ${isUser ? "bg-brand-600 text-white rounded-2xl rounded-tr-sm order-1" : "bg-white border border-slate-100 text-slate-700 rounded-2xl rounded-tl-sm order-2"}`;
-        
-        const content = document.createElement("div");
-        content.className = "whitespace-pre-wrap font-sans";
-        content.textContent = text;
-        bubble.appendChild(content);
-
-        // [FIX 2] เพิ่มปุ่ม Toggle Sources (ซ่อนค่าเริ่มต้น)
-        if (!isUser && (options.intent || (options.sources && options.sources.length))) {
-          const meta = document.createElement("div");
-          meta.className = "mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2";
-          
-          if (options.intent) meta.innerHTML += `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-100 w-fit">Intent: ${options.intent}</span>`;
-          
-          if (options.sources && options.sources.length) {
-            // Unique ID สำหรับ List
-            const listId = 'src-list-' + Math.random().toString(36).substr(2, 9);
-
-            // ปุ่มกด Show/Hide
-            const toggleBtn = document.createElement("button");
-            toggleBtn.className = "text-[11px] font-bold text-slate-500 hover:text-brand-600 transition flex items-center gap-1 mt-1 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 cursor-pointer w-fit";
-            toggleBtn.innerHTML = `<span>▶ ดูแหล่งที่มา (${options.sources.length})</span>`;
-            
-            toggleBtn.onclick = () => {
-                const el = document.getElementById(listId);
-                if (el.classList.contains('hidden')) {
-                    el.classList.remove('hidden');
-                    toggleBtn.innerHTML = `<span>▼ ซ่อนแหล่งที่มา</span>`;
-                } else {
-                    el.classList.add('hidden');
-                    toggleBtn.innerHTML = `<span>▶ ดูแหล่งที่มา (${options.sources.length})</span>`;
-                }
-            };
-            meta.appendChild(toggleBtn);
-
-            // กล่องรายการ Sources (ซ่อน default)
-            const sourceContainer = document.createElement("div");
-            sourceContainer.id = listId;
-            sourceContainer.className = "hidden mt-2 bg-slate-50 rounded-lg p-2.5 text-xs text-slate-500 border border-slate-100/80 transition-all duration-200 ease-in-out";
-            
-            const ul = document.createElement("ul");
-            ul.className = "space-y-1.5 pl-1";
-            options.sources.forEach(s => {
-              const li = document.createElement("li");
-              li.className = "flex gap-2 items-start";
-              li.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-brand-400 mt-1.5 flex-none"></span><span class="opacity-90 break-all"><span class="font-semibold text-slate-700">Doc:</span> ${s.doc_id||"?"} <span class="text-slate-300">|</span> <span class="font-semibold text-slate-700">Page:</span> ${s.page||"?"} <span class="text-slate-300">|</span> <span class="italic text-slate-400">${s.source||"text"}</span></span>`;
-              ul.appendChild(li);
-            });
-            sourceContainer.appendChild(ul);
-            meta.appendChild(sourceContainer);
-          }
-          bubble.appendChild(meta);
-        }
-        
-        wrapper.appendChild(avatar); wrapper.appendChild(bubble); chatMessages.appendChild(wrapper);
-        
-        // [FIX 3] สร้าง Dummy Element เพื่อดัน Scroll ให้สุดจริงๆ
-        const dummy = document.createElement("div");
-        dummy.style.height = "1px";
-        chatMessages.appendChild(dummy);
-        requestAnimationFrame(() => dummy.scrollIntoView({ behavior: "smooth" }));
-      }
-
-      async function uploadFileToBackend(file, docId) {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("doc_id", docId);
-        formData.append("doc_type", "");
-        const res = await fetch("/upload", { method: "POST", body: formData });
-        if (!res.ok) throw new Error(await res.text());
-        return await res.json();
-      }
-
-      async function sendMessage() {
-        const text = chatInput.value.trim();
-        if (!text && !attachedFile) return;
-        const mode = getMode();
-        const selectedDoc = getSelectedDocId();
-        const fileToUpload = attachedFile;
-        attachedFile = null;
-        renderAttachment();
-
-        if (text) appendMessage("user", text);
-        else if (fileToUpload) appendMessage("user", `📎 แนบไฟล์: ${fileToUpload.name}`);
-        chatInput.value = ""; chatInput.style.height = "auto";
-
-        if (fileToUpload) {
-          try {
-            const defaultDocId = fileToUpload.name.replace(/\.[^.]+$/, "");
-            const docId = prompt("ตั้งชื่อ Doc ID:", defaultDocId) || defaultDocId;
-            appendMessage("assistant", `⏳ กำลังอัปโหลด... (ID: ${docId})`, { label: "System" });
-            const res = await uploadFileToBackend(fileToUpload, docId);
-            appendMessage("assistant", `✅ อัปโหลดสำเร็จ! Pages: ${res.page_count}`, { label: "System" });
-            fetchDocuments(); 
-          } catch (err) {
-            console.error(err);
-            appendMessage("assistant", "❌ Error: " + err.message, { label: "Error" });
-            attachedFile = fileToUpload; renderAttachment();
-            if (!text) return;
-          }
-        }
-
-        if (text) {
-          const loadingId = "loading-" + Date.now();
-          const loadingWrapper = document.createElement("div");
-          loadingWrapper.id = loadingId;
-          loadingWrapper.className = "flex w-full mb-6 justify-start msg-animate";
-          loadingWrapper.innerHTML = `<div class="flex-none w-8 h-8 rounded-full bg-white border border-slate-200 text-brand-600 flex items-center justify-center mr-3 shadow-sm"><svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div><div class="bg-white border border-slate-100 text-slate-500 rounded-2xl rounded-tl-sm px-5 py-3.5 shadow-sm text-sm">กำลังค้นหาคำตอบ...</div>`;
-          chatMessages.appendChild(loadingWrapper);
-          
-          // Scroll to Loading
-          requestAnimationFrame(() => loadingWrapper.scrollIntoView({ behavior: "smooth" }));
-
-          try {
-            const payload = {
-              query: text,
-              doc_ids: selectedDoc ? [selectedDoc] : null,
-              top_k: 20,
-              mode: mode,
-            };
-
-            const res = await fetch("/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (!res.ok) throw new Error("API Error: " + res.status);
-            const data = await res.json();
-            document.getElementById(loadingId).remove();
-            appendMessage("assistant", data.answer || "(ไม่พบคำตอบ)", { intent: data.intent, sources: data.sources || [] });
-          } catch (err) {
-            document.getElementById(loadingId).remove();
-            appendMessage("assistant", "❌ Error: " + err.message, { label: "Error" });
-          }
-        }
-      }
-
-      async function loadHistory() {
-        historyBox.innerHTML = '<div class="flex justify-center py-10"><div class="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div></div>';
         try {
-          const res = await fetch(`/history?limit=50`);
-          if (!res.ok) throw new Error("Load failed");
+          const payload = {
+            query: text,
+            doc_ids: selectedDoc ? [selectedDoc] : null,
+            top_k: 20,
+            mode: mode,
+          };
+
+          const res = await fetch("/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          if (!res.ok) throw new Error("API Error: " + res.status);
           const data = await res.json();
-          if (!data.length) { historyBox.innerHTML = '<p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p>'; return; }
-          historyBox.innerHTML = data.map((item) => `
-            <div class="mb-4 pb-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 p-2 rounded transition cursor-default">
-              <div class="flex justify-between items-center mb-1"><span class="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">${item.mode || "Auto"}</span><span class="text-[10px] text-slate-400">${item.ts ? item.ts.substring(0,10) : ""}</span></div>
-              <div class="font-medium text-slate-800 text-sm mb-1 line-clamp-2">Q: ${(item.query||"").replace(/\n/g, " ")}</div>
-              <div class="text-slate-500 text-xs pl-2 border-l-2 border-brand-200 line-clamp-3">A: ${(item.answer||"").replace(/\n/g, " ")}</div>
-            </div>`).join("");
-        } catch (err) { historyBox.innerHTML = `<p class="text-center text-red-400 mt-10">Load Error: ${err.message}</p>`; }
+          document.getElementById(loadingId).remove();
+          appendMessage("assistant", data.answer || "(ไม่พบคำตอบ)", { intent: data.intent, sources: data.sources || [] });
+        } catch (err) {
+          document.getElementById(loadingId).remove();
+          appendMessage("assistant", "❌ Error: " + err.message, { label: "Error" });
+        }
       }
+    }
 
-      sendBtn.onclick = () => sendMessage();
-      chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-      chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + "px"; });
-      uploadBtn.onclick = () => fileInput.click();
-      fileInput.onchange = (e) => { if (e.target.files[0]) { attachedFile = e.target.files[0]; renderAttachment(); } fileInput.value = ""; };
-      toggleHistoryBtn.onclick = () => { if (historyVisible) hideHistoryPanel(); else showHistoryPanel(); };
-      refreshHistoryBtn.onclick = () => loadHistory();
-      
-      // Init Load
-      fetchDocuments();
-      
-      setTimeout(() => { appendMessage("assistant", "สวัสดีครับ/ค่ะ! 👋\n\n**Tip:** ถ้าต้องการค้นหาเฉพาะเอกสารใดเอกสารหนึ่ง สามารถเลือกได้ที่เมนูด้านบน นะครับ/ค่ะ", { label: "System" }); }, 500);
-    </script>
-  </body>
+    async function loadHistory() {
+      historyBox.innerHTML = '<div class="flex justify-center py-10"><div class="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div></div>';
+      try {
+        const res = await fetch(`/history?limit=50`);
+        if (!res.ok) throw new Error("Load failed");
+        const data = await res.json();
+        if (!data.length) { historyBox.innerHTML = '<p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p>'; return; }
+        historyBox.innerHTML = data.map((item) => `
+            <div class="mb-4 pb-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 p-2 rounded transition cursor-default">
+              <div class="flex justify-between items-center mb-1"><span class="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">${item.mode || "Auto"}</span><span class="text-[10px] text-slate-400">${item.ts ? item.ts.substring(0, 10) : ""}</span></div>
+              <div class="font-medium text-slate-800 text-sm mb-1 line-clamp-2">Q: ${(item.query || "").replace(/\n/g, " ")}</div>
+              <div class="text-slate-500 text-xs pl-2 border-l-2 border-brand-200 line-clamp-3">A: ${(item.answer || "").replace(/\n/g, " ")}</div>
+            </div>`).join("");
+      } catch (err) { historyBox.innerHTML = `<p class="text-center text-red-400 mt-10">Load Error: ${err.message}</p>`; }
+    }
+
+    sendBtn.onclick = () => sendMessage();
+    chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + "px"; });
+    uploadBtn.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => { if (e.target.files[0]) { attachedFile = e.target.files[0]; renderAttachment(); } fileInput.value = ""; };
+    toggleHistoryBtn.onclick = () => { if (historyVisible) hideHistoryPanel(); else showHistoryPanel(); };
+    refreshHistoryBtn.onclick = () => loadHistory();
+
+    // Init Load
+    fetchDocuments();
+
+    setTimeout(() => { appendMessage("assistant", "สวัสดีครับ/ค่ะ! 👋\n\n**Tip:** ถ้าต้องการค้นหาเฉพาะเอกสารใดเอกสารหนึ่ง สามารถเลือกได้ที่เมนูด้านบน นะครับ/ค่ะ", { label: "System" }); }, 500);
+  </script>
+</body>
+
 </html>

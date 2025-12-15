@@ -29,7 +29,7 @@ def _get_gemini_model():
     client = genai.Client(api_key=GOOGLE_API_KEY)
 
     # ถ้าอนาคตเปลี่ยนชื่อโมเดล ค่อยมาแก้จุดนี้จุดเดียว
-    model = client.models.get("gemini-2.0-flash")
+    model = client.models.get("gemini-2.5-flash")
     return client, model
 
 

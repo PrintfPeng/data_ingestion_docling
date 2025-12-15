@@ -25,7 +25,7 @@ from .schema import IngestedDocument, TextBlock, TableBlock
 # Helper: Gemini model
 # ---------------------------
 
-GEMINI_MODEL = "models/gemini-2.5-pro"
+GEMINI_MODEL = "models/gemini-2.5-flash"
 
 
 def _get_gemini_model():

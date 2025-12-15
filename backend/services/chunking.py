@@ -10,10 +10,8 @@ from ..models import DocumentBundle, TableItem
 _TARGET_CHARS = 1000
 # ถ้าเกินนี้ต้องตัดแน่นอน
 _MAX_CHUNK_SIZE = 1500
-# ถ้าสั้นกว่านี้ พยายามรวมกับอันอื่น
-_MIN_CHUNK_SIZE = 200
 # ส่วนที่ซ้อนทับกันเพื่อให้บริบทต่อเนื่อง (Overlap)
-_CHUNK_OVERLAP = 100
+_CHUNK_OVERLAP = 200  # เพิ่ม Overlap หน่อยเพื่อให้ Q กับ A เกาะกันแน่นขึ้น
 
 
 class Chunk(BaseModel):
@@ -64,7 +62,6 @@ def _table_to_text(table: TableItem) -> str:
     raw_table_text = "\n".join(row_lines)
     
     # 3. รวมร่าง: [AI Summary] + [Structure] + [Raw Data]
-    # นี่คือเคล็ดลับ: เอา Summary ไว้บนสุด เพื่อให้ Vector Search จับใจความได้ก่อน
     parts = []
     
     if ai_summary:
@@ -77,17 +74,6 @@ def _table_to_text(table: TableItem) -> str:
     parts.append(f"Rows:\n{raw_table_text}")
     
     return "\n".join(parts)
-
-
-def _is_qna_bundle(bundle: DocumentBundle) -> bool:
-    """เช็คว่าเป็นเอกสารแนว Q&A หรือไม่"""
-    count = 0
-    for t in bundle.texts:
-        if not t.content: continue
-        if "ถาม:" in t.content or "ตอบ:" in t.content:
-            count += 1
-    # ถ้าเจอ pattern นี้เยอะๆ (เช่น > 10% ของ blocks หรือ > 5 จุด) ถือว่าเป็น Q&A
-    return count > 5
 
 
 # -------------------------------------------------------------------
@@ -137,7 +123,8 @@ def _split_text_recursively(text: str, target_size: int, chunk_overlap: int) -> 
                     joined = sep.join(current_chunk)
                     final_chunks.append(joined)
                     
-                    # เริ่ม Chunk ใหม่
+                    # เริ่ม Chunk ใหม่ โดยเอาส่วนท้ายของอันเก่ามา Overlap (ถ้าทำได้)
+                    # ในที่นี้เริ่มใหม่เลยเพื่อความง่าย แต่ logic เรียก function นี้เราคุม overlap ระดับหน้าแล้ว
                     current_chunk = []
                     current_len = 0
             
@@ -153,7 +140,7 @@ def _split_text_recursively(text: str, target_size: int, chunk_overlap: int) -> 
 
 
 # -------------------------------------------------------------------
-# 1) Text Chunking (Semantic Enhanced)
+# 1) Text Chunking (Fixed & Improved)
 # -------------------------------------------------------------------
 
 def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
@@ -164,36 +151,10 @@ def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     if not valid_texts:
         return chunks
 
-    # 1. Q&A Mode: เก็บแยกเป็นชิ้นๆ ไม่รวมกัน เพื่อความแม่นยำ
-    if _is_qna_bundle(bundle):
-        for item in valid_texts:
-            content = _normalize_whitespace(item.content)
-            if not content: continue
-            
-            chunks.append(Chunk(
-                id=f"{item.doc_id}::text::{item.id}",
-                doc_id=item.doc_id,
-                doc_type=item.doc_type,
-                source="text",
-                page=item.page,
-                content=content,
-                metadata={
-                    "block_id": item.id,
-                    "page": item.page,
-                    "section": item.section
-                }
-            ))
-        return chunks
-
-    # 2. Semantic Document Mode
-    # รวมเนื้อหาทั้งหมดที่ต่อเนื่องกัน (เช่น ใน section เดียวกัน) แล้วค่อยตัด
-    # เพื่อให้เนื้อหาไม่ขาดช่วง
+    # [FIXED] ตัด Logic แยก Q&A ออก (เพราะมันทำให้ context ขาด) 
+    # ให้ใช้ Logic รวมตามหน้า (Semantic Document Mode) สำหรับทุกเอกสารแทน
     
-    # Group blocks by page (หรือ section ก็ได้ แต่ page ปลอดภัยกว่าสำหรับ PDF)
-    
-    # เก็บ Mapping ว่า text ช่วงไหนมาจาก block id ไหน
-    # เอาแบบ Simple: รวม Text per Page แล้ว Split
-    
+    # Group blocks by page
     page_groups = {}
     for t in valid_texts:
         p = t.page or 0
@@ -206,11 +167,11 @@ def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     for p_num in sorted(page_groups.keys()):
         blocks = page_groups[p_num]
         
-        # รวมข้อความในหน้านั้น
+        # รวมข้อความในหน้านั้นเป็นก้อนเดียว (เพื่อให้ ถาม-ตอบ ที่อยู่คนละ block มารวมกัน)
         full_page_text = "\n\n".join([b.content for b in blocks])
         full_page_text = _normalize_whitespace(full_page_text)
         
-        # ใช้ Semantic Splitter ตัด
+        # ใช้ Semantic Splitter ตัด โดยมี Overlap เพื่อกันตัดกลางประโยค
         split_contents = _split_text_recursively(
             full_page_text, 
             target_size=_TARGET_CHARS, 
@@ -276,12 +237,11 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
 def image_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     chunks: List[Chunk] = []
     for item in bundle.images:
-        # ใช้ Caption ที่ AI Generate มา (ถ้ามี)
+        # ใช้ Caption ที่ AI Generate มา
         content = item.caption or ""
         content = _normalize_whitespace(content)
         
         if not content: 
-            # ถ้าไม่มี caption อาจจะข้าม หรือใส่ placeholder
             continue
 
         chunks.append(Chunk(

@@ -39,7 +39,7 @@ CANDIDATE_TYPES = [
 # Gemini Model Candidates
 # -------------------------
 # เราจะพยายามใช้ PRO ก่อน ถ้าไม่ได้ค่อย fallback เป็น flash
-PRIMARY_MODEL = "models/gemini-2.5-pro"
+PRIMARY_MODEL = "models/gemini-2.5-flash"
 MODEL_CANDIDATES = [
     PRIMARY_MODEL,
     "models/gemini-2.5-flash",
