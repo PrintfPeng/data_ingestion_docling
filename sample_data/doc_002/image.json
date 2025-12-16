@@ -1,0 +1,21 @@
+[
+    {
+      "id": "img_001",
+      "doc_type": "credit_card_statement",
+      "doc_id": "doc_002",
+      "page": 1,
+      "file_path": "images/doc_002/logo_bank.png",
+      "caption": "Credit Card Statement - December 2025",
+      "bbox": [10.0, 10.0, 200.0, 60.0]
+    },
+    {
+      "id": "img_002",
+      "doc_type": "credit_card_statement",
+      "doc_id": "doc_002",
+      "page": 3,
+      "file_path": "images/doc_002/qrcode_payment.png",
+      "caption": "QR Code สำหรับชำระยอดบัตรเครดิต",
+      "bbox": [420.0, 100.0, 520.0, 200.0]
+    }
+  ]
+  

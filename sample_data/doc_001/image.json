@@ -1,0 +1,12 @@
+[
+    {
+      "id": "img_001",
+      "doc_type": "bank_statement",
+      "doc_id": "doc_001",
+      "page": 1,
+      "file_path": "images/doc_001/img_001.png",
+      "caption": "Company logo",
+      "bbox": [0.0, 0.0, 50.0, 50.0]
+    }
+  ]
+  
