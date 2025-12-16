@@ -18,7 +18,7 @@ def main():
     print("🚀 1. Start main function")
     
     # --- แก้ Path ตรงนี้ (ใช้ r นำหน้า) ---
-    pdf_path = r"C:\Users\ASUS\Downloads\test.pdf"
+    pdf_path = r"C:\Users\ASUS\Downloads\test1.pdf"
     # ------------------------------------
     
     if not os.path.exists(pdf_path):
