@@ -40,38 +40,40 @@ def _normalize_whitespace(text: str) -> str:
     return text.strip()
 
 
-def _table_to_text(table: TableItem) -> str:
-    """แปลงตารางเป็น Text สำหรับ Embedding"""
-    
-    # 1. ดึง AI Summary (ถ้ามี)
+# [UPDATED] ฟังก์ชันใหม่สำหรับเตรียม Text ตารางเพื่อการค้นหา (Searchable Content)
+def _table_to_searchable_text(table: TableItem) -> str:
+    """
+    สร้าง Text สำหรับฝัง Embedding โดยใช้:
+    1. บทสรุปจาก AI (Summary) -> สำคัญมากสำหรับ Search
+    2. Markdown Content (ถ้ามี) -> เพื่อให้ AI เข้าใจโครงสร้างตารางได้ดีขึ้น
+    """
     extra = getattr(table, "extra", {}) or {}
     ai_summary = extra.get("summary", "").strip()
+    markdown_content = extra.get("markdown_content", "").strip()
     
-    # 2. สร้าง Raw Table Representation
-    header = f"Table {table.name} (page {table.page})"
-    cols = table.columns if table.columns else []
-    col_line = " | ".join(cols) if cols else ""
-    
-    row_lines = []
-    # ตัดแค่ 15 แถวแรกพอ (กัน token ล้น) ส่วนที่เหลือ AI อาจต้องไปอ่านในไฟล์เต็มเอาเองถ้าจำเป็น
-    max_rows = min(len(table.rows), 15)
-    for row in table.rows[:max_rows]:
-        safe_row = [str(c) if c is not None else "" for c in row]
-        row_lines.append(" | ".join(safe_row))
-    
-    raw_table_text = "\n".join(row_lines)
-    
-    # 3. รวมร่าง: [AI Summary] + [Structure] + [Raw Data]
+    # ถ้าไม่มี Markdown (เคสเก่า หรือ Extraction ไม่ได้ทำไว้) ให้ fallback ไปใช้วิธีเดิม
+    if not markdown_content:
+        header = f"Table {table.name} (page {table.page})"
+        cols = table.columns if table.columns else []
+        col_line = " | ".join(cols) if cols else ""
+        
+        row_lines = []
+        max_rows = min(len(table.rows), 15)
+        for row in table.rows[:max_rows]:
+            safe_row = [str(c) if c is not None else "" for c in row]
+            row_lines.append(" | ".join(safe_row))
+        
+        raw_table_text = "\n".join(row_lines)
+        markdown_content = f"{header}\nColumns: {col_line}\nRows:\n{raw_table_text}"
+
+    # รวมร่าง: [AI Summary] + [Markdown Content]
     parts = []
     
     if ai_summary:
         parts.append(f"บทสรุปตาราง: {ai_summary}")
         parts.append("-" * 20)
     
-    parts.append(header)
-    if col_line:
-        parts.append(f"Columns: {col_line}")
-    parts.append(f"Rows:\n{raw_table_text}")
+    parts.append(markdown_content)
     
     return "\n".join(parts)
 
@@ -83,13 +85,7 @@ def _table_to_text(table: TableItem) -> str:
 def _split_text_recursively(text: str, target_size: int, chunk_overlap: int) -> List[str]:
     """
     ตัดข้อความยาวๆ ให้เป็นชิ้นย่อย โดยพยายามตัดที่จุดที่เหมาะสม
-    ลำดับความสำคัญการตัด:
-    1. \n\n (ย่อหน้า)
-    2. \n (บรรทัด)
-    3. . (จบประโยค)
-    4. , (คอมม่า)
-    5. " " (ช่องว่าง)
-    6. ตัดดื้อๆ (Character limit)
+    ลำดับความสำคัญการตัด: 1. \n\n 2. \n 3. . 4. , 5. " "
     """
     if len(text) <= target_size:
         return [text]
@@ -123,8 +119,7 @@ def _split_text_recursively(text: str, target_size: int, chunk_overlap: int) -> 
                     joined = sep.join(current_chunk)
                     final_chunks.append(joined)
                     
-                    # เริ่ม Chunk ใหม่ โดยเอาส่วนท้ายของอันเก่ามา Overlap (ถ้าทำได้)
-                    # ในที่นี้เริ่มใหม่เลยเพื่อความง่าย แต่ logic เรียก function นี้เราคุม overlap ระดับหน้าแล้ว
+                    # เริ่ม Chunk ใหม่
                     current_chunk = []
                     current_len = 0
             
@@ -151,10 +146,7 @@ def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     if not valid_texts:
         return chunks
 
-    # [FIXED] ตัด Logic แยก Q&A ออก (เพราะมันทำให้ context ขาด) 
-    # ให้ใช้ Logic รวมตามหน้า (Semantic Document Mode) สำหรับทุกเอกสารแทน
-    
-    # Group blocks by page
+    # Group blocks by page (Semantic Document Mode)
     page_groups = {}
     for t in valid_texts:
         p = t.page or 0
@@ -167,11 +159,11 @@ def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     for p_num in sorted(page_groups.keys()):
         blocks = page_groups[p_num]
         
-        # รวมข้อความในหน้านั้นเป็นก้อนเดียว (เพื่อให้ ถาม-ตอบ ที่อยู่คนละ block มารวมกัน)
+        # รวมข้อความในหน้านั้นเป็นก้อนเดียว
         full_page_text = "\n\n".join([b.content for b in blocks])
         full_page_text = _normalize_whitespace(full_page_text)
         
-        # ใช้ Semantic Splitter ตัด โดยมี Overlap เพื่อกันตัดกลางประโยค
+        # ใช้ Semantic Splitter ตัด
         split_contents = _split_text_recursively(
             full_page_text, 
             target_size=_TARGET_CHARS, 
@@ -204,14 +196,21 @@ def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
 
 
 # -------------------------------------------------------------------
-# 2) Table Chunking
+# 2) Table Chunking (Hybrid Mode Updated)
 # -------------------------------------------------------------------
 
 def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     chunks: List[Chunk] = []
     for item in bundle.tables:
-        text = _table_to_text(item).strip()
-        if not text: continue
+        # [UPDATED] ใช้ฟังก์ชันใหม่ _table_to_searchable_text เพื่อรวม Summary
+        search_text = _table_to_searchable_text(item).strip()
+        if not search_text: continue
+
+        # [UPDATED] ดึง HTML และ Markdown ที่เราเตรียมไว้ใน table_extractor มาใส่ Metadata
+        # ส่วนนี้สำคัญมากสำหรับการแสดงผลหน้าเว็บ
+        extra = getattr(item, "extra", {}) or {}
+        html_code = extra.get("html_content", "")
+        markdown_code = extra.get("markdown_content", "")
 
         chunks.append(Chunk(
             id=f"{item.doc_id}::table::{item.id}",
@@ -219,12 +218,15 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
             doc_type=item.doc_type,
             source="table",
             page=item.page,
-            content=text,
+            content=search_text,  # ใช้ Text+Summary สำหรับ Search
             metadata={
                 "table_id": item.id,
                 "page": item.page,
                 "columns": str(item.columns),
-                "has_summary": bool(getattr(item, "extra", {}).get("summary"))
+                "has_summary": bool(extra.get("summary")),
+                # [CRITICAL FIX] เก็บ HTML ไว้ใน Metadata เพื่อส่งกลับไปหน้าเว็บ
+                "html_content": html_code,
+                "markdown_content": markdown_code
             }
         ))
     return chunks

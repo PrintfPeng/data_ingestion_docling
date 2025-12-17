@@ -23,7 +23,7 @@ except Exception:
     SystemMessage = None  # type: ignore
     _HAS_GENAI = False
 
-# --- [NEW] Re-ranking imports ---
+# --- Re-ranking imports ---
 try:
     from sentence_transformers import CrossEncoder
     _HAS_RERANKER = True
@@ -145,8 +145,6 @@ async def classify_query_intent(query: str) -> str:
     Try to use LLM to decide intent; fallback to rule-based.
     Keep this short to reduce cost.
     """
-    # [UPDATED] เพื่อประหยัด Quota ช่วงนี้ ให้ใช้ Rule-based ไปเลย 100%
-    # จะได้ไม่เสีย request ฟรีๆ ไปกับการเดา intent
     return _rule_based_intent(query) or "text"
 
 
@@ -190,8 +188,7 @@ def _generate_fallback_answer(docs, error_msg: str = "") -> str:
     
     joined_snippets = "\n\n".join(snippets)
     
-    header = "⚠️ **แจ้งเตือน:** ขณะนี้โควต้า AI เต็มหรือระบบขัดข้อง " \
-             "ระบบจึงดึงเนื้อหาที่เกี่ยวข้องจากเอกสารมาแสดงให้โดยตรงครับ:\n\n"
+    header = f"⚠️ **แจ้งเตือน ({error_msg}):** ระบบจึงดึงเนื้อหาที่เกี่ยวข้องจากเอกสารมาแสดงให้โดยตรงครับ:\n\n"
              
     return header + joined_snippets
 
@@ -208,44 +205,31 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
         return []
 
     # 1. Exact Match Boosting (Lite Hybrid)
-    # ช่วยกรณีรหัสนักศึกษา/ตัวเลข ที่ Vector อาจมองว่าไม่สำคัญ
     query_terms = set(query.lower().split())
-    
-    # คำนวณคะแนนเบื้องต้น (Keyword overlap)
     scored_docs = []
     for d in docs:
         content = (getattr(d, "page_content", "") or "").lower()
         keyword_score = 0
         for term in query_terms:
             if term in content:
-                keyword_score += 1.5  # ให้คะแนนพิเศษคำละ 1.5 แต้ม
-        
-        # เก็บ doc ไว้คู่กับคะแนน (Keyword score อย่างเดียวก่อน)
+                keyword_score += 1.5
         scored_docs.append({"doc": d, "score": keyword_score})
 
     # 2. Cross-Encoder Re-ranking (The Real Intelligence)
     reranker = _get_reranker_model()
     if reranker:
         try:
-            # เตรียมคู่ประโยค (Query, Doc) ส่งให้ AI ตัดสิน
             pairs = [[query, d["doc"].page_content] for d in scored_docs]
             ai_scores = reranker.predict(pairs)
-            
-            # รวมคะแนน AI + Keyword
             for i, score in enumerate(ai_scores):
                 scored_docs[i]["score"] += float(score)
-                
             logger.debug(f"[rag] Re-ranking complete for {len(docs)} docs.")
         except Exception as e:
             logger.warning(f"[rag] Re-ranking failed (using basic sort): {e}")
 
     # 3. Sort & Cut
-    # เรียงจากคะแนนมากไปน้อย
     scored_docs.sort(key=lambda x: x["score"], reverse=True)
-    
-    # คืนค่าเฉพาะ Document object
     final_docs = [item["doc"] for item in scored_docs]
-    
     return final_docs[:top_k]
 
 
@@ -253,9 +237,6 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
 # 4) Q&A extraction + matching utilities
 # -------------------------------------------------------------------
 def _load_qna_pairs_for_doc(doc_id: str) -> List[Dict[str, str]]:
-    """
-    Load ingested text.json and extract Q/A pairs with caching.
-    """
     if doc_id in _QNA_CACHE:
         return _QNA_CACHE[doc_id]
 
@@ -270,7 +251,6 @@ def _load_qna_pairs_for_doc(doc_id: str) -> List[Dict[str, str]]:
         _QNA_CACHE[doc_id] = []
         return []
 
-    # combine all text blocks
     full = "\n".join((item.get("content") or "") for item in raw)
     pairs: List[Dict[str, str]] = []
     for m in _QNA_PATTERN.finditer(full):
@@ -287,10 +267,6 @@ def _simple_similarity(a: str, b: str) -> float:
 
 
 def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
-    """
-    For any docs that are qna-type (doc_type == 'qna'), try deterministic match:
-    return {'answer': str, 'sources': [...] } or None
-    """
     qna_doc_ids = sorted({
         (d.metadata or {}).get("doc_id")
         for d in docs
@@ -313,11 +289,9 @@ def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
                 best_answer = p["answer"]
                 best_doc = doc_id
 
-    # [UPDATED] Threshold lowered to 0.45 for more flexibility (user typos/partial match)
     if not best_answer or best_score < 0.45:
         return None
 
-    # build sources list from docs that match doc_id
     sources = []
     for d in docs:
         md = d.metadata or {}
@@ -332,185 +306,154 @@ def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
 
 
 # -------------------------------------------------------------------
-# 5) main RAG function
+# 5) main RAG function (IMPROVED & FIXED 500 ERROR)
 # -------------------------------------------------------------------
+# [FIXED & SAFE] แก้ไขให้ return dict พร้อม mode เสมอ กัน Error 500
 async def answer_question(
     query: str,
     doc_ids: Optional[List[str]] = None,
     top_k: int = 10,
-    mode: str = "auto",  # auto | text | table | both
+    mode: str = "auto",
 ) -> Dict:
-    """
-    Robust RAG flow:
-    - intent decision (rule-based -> optional LLM)
-    - similarity search + RE-RANKING (Improved Logic)
-    - deterministic Q&A (if doc_type qna)
-    - LLM RAG fallback (if needed) with safe error handling
-    """
-
+    
+    # 1. Input Check
     if not query or not query.strip():
-        return {"answer": "คำถามว่าง กรุณาพิมพ์ข้อความคำถาม", "sources": [], "intent": None, "mode": mode}
+        return {"answer": "คำถามว่าง", "sources": [], "intent": None, "mode": mode}
 
-    # 1) intent
     if mode == "auto":
         intent = _rule_based_intent(query) or "text"
-        # [UPDATED] ปิด LLM classify เพื่อประหยัด Quota (ใช้ rule-based ด้านบน)
     elif mode in ("text", "table", "both"):
         intent = mode
     else:
-        intent = _rule_based_intent(query) or "text"
+        intent = "text"
 
-    # map to sources
-    if intent == "text":
-        sources_filter = ["text"]
-    elif intent == "table":
-        sources_filter = ["table", "text"]
-    else:
-        sources_filter = ["text", "table"]
-
-    # Decide doc_types to prefer: if user provided doc_ids, try those; else None
     doc_types = None
+    sources_filter = ["table", "text"] if intent == "table" else ["text", "table"]
 
-    # 2) Search + Re-ranking Strategy
+    # 2. Search
+    docs = []
     try:
-        # Step A: Fetch MORE candidates (x3 of needed) to ensure we don't miss anything
-        # (เพราะ Vector Search อาจเอาของดีไปไว้อันดับ 15)
-        initial_k = top_k * 3
-        
-        raw_docs = search_similar(
-            query=query,
-            k=initial_k, 
-            doc_ids=doc_ids,
-            sources=sources_filter,
-            doc_types=doc_types,
-        )
-        
-        # Step B: Re-rank using Cross-Encoder + Keyword Boosting
-        # คัดเนื้อๆ เน้นๆ เหลือแค่ top_k ตามที่ขอ
+        raw_docs = search_similar(query, k=top_k*3, doc_ids=doc_ids, sources=sources_filter, doc_types=doc_types)
         docs = _rerank_documents(query, raw_docs, top_k)
-        
     except Exception as e:
-        logger.exception("[rag] search_similar failed: %s", e)
-        return {
-            "answer": "เกิดข้อผิดพลาดระหว่างค้นหาใน Vector DB. ลองล้าง index แล้ว re-ingest หรือดู log เพิ่มเติม.",
-            "sources": [],
-            "intent": intent,
-            "mode": mode,
-        }
+        logger.error(f"Search failed: {e}")
+        # [CRITICAL FIX] ใส่ mode กลับไปด้วย เพื่อไม่ให้ pydantic validate fail
+        return {"answer": f"ระบบค้นหาขัดข้อง: {str(e)}", "sources": [], "intent": intent, "mode": mode}
 
     if not docs:
-        return {
-            "answer": "ไม่พบข้อมูลที่เกี่ยวข้องเพียงพอในฐานข้อมูลเอกสาร",
-            "sources": [],
-            "intent": intent,
-            "mode": mode,
-        }
+        return {"answer": "ไม่พบข้อมูลที่เกี่ยวข้อง", "sources": [], "intent": intent, "mode": mode}
 
-    # 2.5 deterministic Q&A on qna docs
-    qna_direct = _find_best_qna_answer_from_docs(query, docs)
-    if qna_direct:
-        return {
-            "answer": qna_direct["answer"],
-            "sources": qna_direct["sources"],
-            "intent": intent,
-            "mode": f"{mode}+qna_direct",
-        }
+    # 2.5 Deterministic Q&A
+    try:
+        qna_direct = _find_best_qna_answer_from_docs(query, docs)
+        if qna_direct:
+            return {"answer": qna_direct["answer"], "sources": qna_direct["sources"], "intent": intent, "mode": f"{mode}+qna"}
+    except Exception:
+        pass 
 
-    # 3) Prepare context and choose qna_mode for LLM prompt
-    context_text = _build_context_text(docs)
+    # --- 3) Prepare Context & Table Map ---
+    context_parts = []
+    table_map = {} 
+    table_counter = 0 
     
-    # --- [UPDATED LOGIC] ---
-    # เชื่อ Metadata (doc_type) ที่ Auto-detect มาจากขั้นตอน Ingestion
-    qna_mode = False
-    
-    qna_doc_count = 0
-    for d in docs:
-        md = d.metadata or {}
-        # ตรวจสอบ doc_type จาก metadata (case-insensitive)
-        if (md.get("doc_type") or "").lower() == "qna":
-            qna_doc_count += 1
+    try:
+        for i, d in enumerate(docs, 1):
+            md = d.metadata or {}
             
-    # ถ้าเอกสารที่ค้นเจอเป็น QnA เกิน 40% ให้ถือว่าเป็นโหมด QnA
-    if docs and (qna_doc_count / len(docs)) > 0.4:
-        qna_mode = True
-    # -----------------------
+            # Normalize source
+            source = str(md.get("source", "text")).lower().strip()
+            
+            doc_name = md.get("doc_id", "unknown")
+            page = md.get("page", "?")
+            
+            if source == "table":
+                table_counter += 1
+                table_ref_id = str(table_counter)
+                
+                # Retrieve HTML content
+                html_content = md.get("html_content", "")
+                if not html_content:
+                    html_content = f"<pre class='text-xs overflow-auto p-2 bg-gray-100'>{md.get('markdown_content', 'No content')}</pre>"
+                
+                table_map[table_ref_id] = html_content
+                
+                context_parts.append(
+                    f"--- SOURCE {i} (Type: Table) ---\n"
+                    f"Document: {doc_name}, Page: {page}\n"
+                    f"Table ID: TBL_{table_ref_id}\n"
+                    f"Content:\n{md.get('markdown_content', d.page_content)}\n"
+                    f"-------------------------------------------"
+                )
+            else:
+                context_parts.append(
+                    f"--- SOURCE {i} (Type: Text) ---\n"
+                    f"{d.page_content[:3000]}\n"
+                )
+    except Exception as e:
+        logger.error(f"Context build failed: {e}")
+        return {"answer": "เกิดข้อผิดพลาดในการเตรียมข้อมูล", "sources": [], "intent": intent, "mode": mode}
 
-    # Build system prompt
-    if qna_mode:
-        system_prompt = (
-            "คุณกำลังตอบคำถามจากเอกสารที่เป็นชุด 'ถาม: ... / ตอบ: ...' (ภาษาไทย/อังกฤษ)\n"
-            "กติกา:\n"
-            "1) ให้หาคู่ 'ถาม: ... / ตอบ: ...' ที่ตรงกับคำถามของผู้ใช้มากที่สุด\n"
-            "2) ใช้ข้อความหลัง 'ตอบ:' เป็นคำตอบหลัก (สามารถปรับรูป but not change meaning)\n"
-            "3) ห้ามใช้ความรู้ภายนอกเอกสาร\n"
-            "4) ถ้าไม่มีคำตอบที่เกี่ยวข้อง ให้ตอบว่า 'ไม่พบในเอกสาร'\n\n"
-            "=== CONTEXT START ===\n"
-            f"{context_text}\n"
-            "=== CONTEXT END ===\n"
-        )
-    else:
-        system_prompt = (
-            "คุณเป็นผู้ช่วยอ่านและตอบคำถามจาก CONTEXT ด้านล่าง (ภาษาไทย/อังกฤษ). "
-            "ให้ตอบโดยอ้างอิงเฉพาะข้อมูลใน CONTEXT เท่านั้น และถ้าข้อมูลไม่พอ ให้ตอบว่า 'ไม่ทราบจากข้อมูลที่มีอยู่'.\n\n"
-            f"(intent={intent})\n"
-            "=== CONTEXT START ===\n"
-            f"{context_text}\n"
-            "=== CONTEXT END ===\n"
-        )
-    user_prompt = query
+    context_text = "\n\n".join(context_parts)
+    
+    system_prompt = (
+        "คุณเป็นผู้ช่วยอัจฉริยะที่ตอบคำถามจากเอกสาร\n"
+        "กฎสำคัญ:\n"
+        "1. ห้ามสร้างตารางด้วย Markdown (|...|) เด็ดขาด\n"
+        "2. ถ้าคำตอบอ้างอิงข้อมูลจากตารางที่มี 'Table ID: TBL_x' ให้คุณ:\n"
+        "   - สรุปใจความสำคัญเป็นข้อความสั้นๆ\n"
+        "   - จบด้วย Tag: [SHOW_TABLE:TBL_x] ตาม ID ที่ระบุใน Context เท่านั้น\n"
+        "3. ห้ามคิดข้อมูลเอง ให้ใช้ข้อมูลจาก Context เท่านั้น\n"
+        "\n"
+        f"=== CONTEXT ===\n{context_text}\n==============="
+    )
 
-    # 4) If no LLM available -> give safe fallback answer using context snippets
+    # 4) Call LLM
     llm = _get_llm_instance()
     if not llm:
-        # Fallback: AI not configured
-        ans = _generate_fallback_answer(docs, "No LLM Configured")
-        
-        # prepare sources
-        sources = [{
-            "doc_id": (d.metadata or {}).get("doc_id"),
-            "page": (d.metadata or {}).get("page"),
-            "source": (d.metadata or {}).get("source"),
-            "chunk_id": (d.metadata or {}).get("chunk_id"),
-        } for d in docs[:top_k]]
-        return {
-            "answer": ans,
-            "sources": sources,
-            "intent": intent,
-            "mode": f"{mode}+no_llm",
-        }
+        return {"answer": _generate_fallback_answer(docs, "No LLM"), "sources": [], "intent": intent, "mode": f"{mode}+no_llm"}
 
-    # 5) Use LLM, but guard errors and do a single retry for transient errors
-    answer_text = None
-    llm_attempts = 0
-    max_attempts = 2
-    last_exc = None
-    
-    while llm_attempts < max_attempts:
+    answer_text = "AI Error"
+    try:
+        resp = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+        answer_text = getattr(resp, "content", str(resp))
+    except Exception as e:
+        logger.error(f"LLM Error: {e}")
+        # [CRITICAL FIX] ใส่ mode กลับไปด้วย
+        return {"answer": _generate_fallback_answer(docs, "Quota/Error"), "sources": [], "intent": intent, "mode": f"{mode}+error"}
+
+    # --- 5) Regex Replacement ---
+    if table_map and answer_text:
         try:
-            resp = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
-            answer_text = getattr(resp, "content", None) or str(resp)
-            break
+            def replace_match(match):
+                # match.group(1) คือตัวเลขที่จับได้ (เช่น '1' จาก 'TBL_1' หรือ '4.2' จาก 'TBL_4.2')
+                found_id = match.group(1)
+                
+                # 1. ลองหาแบบตรงๆ
+                if found_id in table_map:
+                    html = table_map[found_id]
+                    return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{html}</div>\n"
+                
+                # 2. ถ้าหาไม่เจอ ลองตัดทศนิยมทิ้ง (เผื่อ AI เอาเลขข้อมาตอบ เช่น 4.2 -> 4)
+                if "." in found_id:
+                    simple_id = found_id.split(".")[0]
+                    if simple_id in table_map:
+                         html = table_map[simple_id]
+                         return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{html}</div>\n"
+
+                # 3. ถ้ายังไม่เจออีก ให้ลองดูว่าถ้ามีตารางเดียวใน Context ก็เอามาใส่เลย (Fallback สุดท้าย)
+                if len(table_map) == 1:
+                    first_key = list(table_map.keys())[0]
+                    return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[first_key]}</div>\n"
+
+                return match.group(0)
+
+            # Regex ที่ครอบคลุมทศนิยม: TBL1, TBL_1, TBL 1, TBL_4.2
+            pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*TBL[_]?\s*([\d\.]+)\]", re.IGNORECASE)
+            answer_text = pattern.sub(replace_match, answer_text)
         except Exception as e:
-            llm_attempts += 1
-            last_exc = e
-            logger.warning("[rag] LLM call failed (attempt %d/%d): %s", llm_attempts, max_attempts, e)
-            
-            # [UPDATED] ถ้าเจอ Quota เต็ม หรือ Rate Limit ให้ Fallback ไปโชว์เนื้อหาดิบเลย ไม่ต้องรอ Retry
-            msg = str(e).lower()
-            if "quota" in msg or "rate limit" in msg or "exceeded" in msg or "429" in msg:
-                logger.warning("[rag] Quota limit hit! Switching to fallback snippets.")
-                answer_text = _generate_fallback_answer(docs, "Quota Exceeded")
-                break
-            
-            # small backoff before retrying transient errors
-            await asyncio.sleep(1 + llm_attempts * 1.0)
+            logger.error(f"Regex replacement failed: {e}")
 
-    if answer_text is None:
-        # [UPDATED] สุดท้ายถ้าพังจริงๆ ก็ยังโชว์ fallback snippets แทนที่จะบอกว่า error
-        logger.exception("[rag] LLM failed finally: %s", last_exc)
-        answer_text = _generate_fallback_answer(docs, "AI Error")
-
-    # 6) prepare sources for frontend
+    # 6) Sources
     sources = []
     for d in docs:
         md = d.metadata or {}
@@ -518,12 +461,8 @@ async def answer_question(
             "doc_id": md.get("doc_id"),
             "page": md.get("page"),
             "source": md.get("source"),
-            "chunk_id": md.get("chunk_id"),
+            "chunk_id": md.get("chunk_id")
         })
 
-    return {
-        "answer": answer_text,
-        "sources": sources,
-        "intent": intent,
-        "mode": f"{mode}+qna_llm" if qna_mode else f"{mode}+rag_llm",
-    }
+    # [CRITICAL] Return Dictionary พร้อม mode เสมอ ห้าม return None
+    return {"answer": answer_text, "sources": sources, "intent": intent, "mode": f"{mode}+qna_llm"}
