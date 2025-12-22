@@ -16,3 +16,6 @@ langchain-community
 langchain-google-genai
 python-multipart
 Pillow
+docling>=2.0.0
+docling-core>=2.29.0
+rich
