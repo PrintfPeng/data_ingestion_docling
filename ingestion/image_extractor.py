@@ -21,6 +21,10 @@ from PIL import Image
 
 from .schema import ImageBlock
 from .config import GOOGLE_API_KEY  # ดึง Key จาก config กลาง
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 # -------------------------------------------------------------------
 # Helper: Gemini Vision
@@ -33,9 +37,9 @@ def _get_gemini_vision_model():
         return None
 
     try:
-        genai.configure(api_key=GOOGLE_API_KEY)
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
         # ใช้ Flash เพราะเร็วและถูก เหมาะกับงาน Caption จำนวนมาก
-        return genai.GenerativeModel("gemini-2.0-flash")
+        return genai.GenerativeModel("gemini-2.5-flash")
     except Exception as e:
         print(f"[image_extractor] Failed to init Gemini: {e}")
         return None

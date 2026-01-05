@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import os
+import re  # [NEW] Import re
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +37,27 @@ app.mount(
 # โฟลเดอร์สำหรับอัปโหลดไฟล์ PDF ใหม่
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# -----------------------------------------------------------
+# Helper: ID Normalization (CRITICAL FIX)
+# -----------------------------------------------------------
+def _normalize_id(raw_id: str) -> str:
+    """
+    ทำให้ ID เป็นมาตรฐานเดียวกันทั้งระบบ (Backend/Frontend/DB)
+    - เปลี่ยนเป็นตัวพิมพ์เล็ก
+    - แทนที่ช่องว่างด้วย _
+    - ลบอักขระพิเศษ
+    """
+    if not raw_id:
+        return "unknown_doc"
+    # 1. Lowercase & Strip
+    s = raw_id.strip().lower()
+    # 2. Replace spaces with underscores
+    s = re.sub(r"\s+", "_", s)
+    # 3. Remove weird chars (keep alphanumeric, underscore, hyphen)
+    s = re.sub(r"[^a-z0-9_\-]", "", s)
+    return s
 
 
 # -----------------------------------------------------------
@@ -71,10 +93,17 @@ class AskResponse(BaseModel):
 
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
+    
+    # [FIX] Normalize doc_ids before sending to RAG
+    # เพื่อให้ตรงกับตอน Upload (แก้ปัญหา ID Mismatch)
+    sanitized_doc_ids = None
+    if req.doc_ids:
+        sanitized_doc_ids = [_normalize_id(did) for did in req.doc_ids if did]
+
     # 1) เรียก RAG ตอบคำถาม
     result = await answer_question(
         query=req.query,
-        doc_ids=req.doc_ids,
+        doc_ids=sanitized_doc_ids, # Use sanitized IDs
         top_k=req.top_k,
         mode=req.mode,
     )
@@ -84,7 +113,8 @@ async def ask(req: AskRequest):
         append_log(
             {
                 "query": req.query,
-                "doc_ids": req.doc_ids,
+                "doc_ids": req.doc_ids, # Log original IDs for debugging
+                "sanitized_ids": sanitized_doc_ids,
                 "top_k": req.top_k,
                 "mode": req.mode,
                 "answer": result.get("answer"),
@@ -170,8 +200,14 @@ async def upload_pdf(
     if not doc_id.strip():
         raise HTTPException(status_code=400, detail="ต้องระบุ doc_id")
 
-    # 2) เซฟไฟล์ลง uploads/
-    dest_path = UPLOAD_DIR / f"{doc_id}.pdf"
+    # [FIX] Normalize ID ทันทีที่รับมา
+    # นี่คือจุดสำคัญที่สุด: เปลี่ยน "Operation Manual Sharp" -> "operation_manual_sharp"
+    safe_doc_id = _normalize_id(doc_id)
+    
+    print(f"[UPLOAD] Received doc_id='{doc_id}' -> normalized='{safe_doc_id}'")
+
+    # 2) เซฟไฟล์ลง uploads/ โดยใช้ safe_doc_id
+    dest_path = UPLOAD_DIR / f"{safe_doc_id}.pdf"
     try:
         with dest_path.open("wb") as f:
             shutil.copyfileobj(file.file, f)
@@ -188,7 +224,7 @@ async def upload_pdf(
                 "scripts.run_ingestion",
                 str(dest_path),
                 "--doc-id",
-                doc_id,
+                safe_doc_id, # Use sanitized ID
                 "--doc-type",
                 doc_type,
             ]
@@ -202,7 +238,7 @@ async def upload_pdf(
                 "scripts.run_all",
                 str(dest_path),
                 "--doc-id",
-                doc_id,
+                safe_doc_id, # Use sanitized ID
                 "--doc-type",
                 doc_type,
             ]
@@ -228,7 +264,8 @@ async def upload_pdf(
 
     return {
         "ok": True,
-        "doc_id": doc_id,
+        "doc_id": safe_doc_id, # Return normalized ID
+        "original_doc_id": doc_id,
         "doc_type": doc_type,
         "use_ocr": use_ocr,
     }
@@ -246,10 +283,16 @@ def list_documents():
         # Scan folder names inside 'ingested'
         for item in ingested_root.iterdir():
             if item.is_dir():
-                docs.append(item.name)
+                # [FIX] Return both ID and Display Name
+                # ID = folder name (which is normalized)
+                # Name = folder name (can be improved if we stored mapping, but this is consistent)
+                docs.append({
+                    "id": item.name,
+                    "name": item.name
+                })
     
     # Sort for consistency
-    docs.sort()
+    docs.sort(key=lambda x: x["name"])
     return {"documents": docs}
 
 # -----------------------------------------------------------

@@ -7,6 +7,7 @@ const uploadBtn = document.getElementById("uploadBtn");
 const fileInput = document.getElementById("fileInput");
 const toggleHistoryBtn = document.getElementById("toggleHistoryBtn");
 const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
+const closeHistoryBtn = document.getElementById("closeHistoryBtn"); 
 const historyPanel = document.getElementById("historyPanel");
 const historyBox = document.getElementById("historyBox");
 const attachmentInfo = document.getElementById("attachmentInfo");
@@ -18,6 +19,25 @@ const docSelectMobile = document.getElementById("docSelectMobile");
 
 let historyVisible = false;
 let attachedFile = null;
+
+// =======================
+// 🔐 DOMPurify Configuration
+// =======================
+const sanitizeConfig = {
+    ALLOWED_TAGS: [
+        'b','i','em','strong','a','p','br','ul','ol','li',
+        'table','thead','tbody','tr','th','td','caption',
+        'div','span','details','summary',
+        'svg','path','circle'
+    ],
+    ALLOWED_ATTR: [
+        'href','target','class','id','style',
+        'fill','viewBox','d',
+        'stroke','stroke-width','stroke-linecap','stroke-linejoin',
+        'open'
+    ],
+    ALLOW_DATA_ATTR: false
+};
 
 // --- Helper Functions ---
 
@@ -68,7 +88,7 @@ function renderAttachment() {
 }
 
 // --- Main Chat Logic ---
-
+// [FIX 1] ปรับปรุง fetchDocuments ให้ใช้ Object {id, name} จาก Backend
 async function fetchDocuments() {
     try {
         const res = await fetch("/documents");
@@ -81,18 +101,118 @@ async function fetchDocuments() {
             sel.innerHTML = '<option value="">📚 ค้นหาทุกเอกสาร (All)</option>';
             docs.forEach(doc => {
                 const opt = document.createElement("option");
-                opt.value = doc;
-                opt.text = `📄 ${doc}`;
+                // Backend ส่งมาเป็น Object {id, name} เสมอ
+                opt.value = doc.id;  // ใช้ ID จริงเป็น value
+                opt.text = `📄 ${doc.name}`;  // ใช้ name แสดงใน Dropdown
                 sel.add(opt);
             });
-            if (docs.includes(currentVal)) sel.value = currentVal;
+            
+            // คงค่าเดิมที่เลือกไว้ (ถ้ายังมีอยู่)
+            const optionExists = Array.from(sel.options).some(o => o.value === currentVal);
+            if (optionExists && currentVal) sel.value = currentVal;
         });
     } catch (e) {
         console.error("Failed to load documents:", e);
     }
 }
 
-// [REMOVED] Function injectTableFromSource (ไม่จำเป็นแล้วเพราะ Backend ส่ง HTML มาให้แล้ว)
+function extractTablesFromHtml(html) {
+    const temp = document.createElement("div");
+    temp.innerHTML = html;
+    
+    const tables = Array.from(temp.querySelectorAll("table"));
+    const result = tables.map((t, idx) => {
+        let title = t.getAttribute("data-title") || "";
+        if (!title) {
+            const caption = t.querySelector("caption");
+            if (caption) title = caption.textContent.trim();
+        }
+        if (!title) title = `ตารางที่ ${idx + 1}`;
+        
+        return {
+            title: title,
+            html: t.outerHTML
+        };
+    });
+    
+    tables.forEach(t => t.remove());
+    
+    return {
+        text: temp.innerHTML.trim(),
+        tables: result
+    };
+}
+
+function renderAnswerText(textContainer, text) {
+    // 🛡️ ป้องกัน XSS ก่อนแสดงผล
+    const cleanHtml = (typeof DOMPurify !== 'undefined') 
+        ? DOMPurify.sanitize(text || "", sanitizeConfig)
+        : (text || "");
+    textContainer.innerHTML = cleanHtml;
+}
+
+function renderAnswerTables(tablesContainer, tables) {
+    tablesContainer.innerHTML = "";
+    if (!tables || tables.length === 0) return;
+
+    tables.forEach((tbl, idx) => {
+        const details = document.createElement("details");
+        details.className = "border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden mb-3 group";
+        details.open = idx === 0;
+
+        const summary = document.createElement("summary");
+        summary.className =
+            "cursor-pointer px-4 py-2.5 font-semibold text-sm text-slate-700 bg-slate-50 hover:bg-slate-100 transition flex items-center justify-between select-none list-none";
+
+        const cleanTitle = (typeof DOMPurify !== 'undefined') 
+            ? DOMPurify.sanitize(tbl.title || `ตารางที่ ${idx + 1}`, sanitizeConfig)
+            : (tbl.title || `ตารางที่ ${idx + 1}`);
+
+        summary.innerHTML = `
+            <span class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z">
+                    </path>
+                </svg>
+                ${cleanTitle}
+            </span>
+            <svg class="w-4 h-4 text-slate-400 transform transition-transform group-open:rotate-180 details-chevron"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M19 9l-7 7-7-7"></path>
+            </svg>
+        `;
+
+        const body = document.createElement("div");
+        body.className = "px-2 py-3 overflow-x-auto bg-white";
+
+        const cleanTableHtml = (typeof DOMPurify !== 'undefined') 
+            ? DOMPurify.sanitize(tbl.html || "", sanitizeConfig)
+            : (tbl.html || "");
+        body.innerHTML = cleanTableHtml;
+
+        details.appendChild(summary);
+        details.appendChild(body);
+        tablesContainer.appendChild(details);
+    });
+}
+
+// [FIX 5] Helper function for scrolling to bottom properly
+function scrollToBottom() {
+    // ใช้ requestAnimationFrame สองครั้งเพื่อให้แน่ใจว่า DOM render เสร็จแล้วจริงๆ
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const dummy = document.getElementById("scrollDummy");
+            if (dummy) {
+                dummy.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            } else {
+                // Fallback ถ้าหา dummy ไม่เจอ
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+        });
+    });
+}
 
 function appendMessage(role, text, options = {}) {
     const isUser = role === "user";
@@ -108,15 +228,31 @@ function appendMessage(role, text, options = {}) {
     const bubble = document.createElement("div");
     bubble.className = `relative max-w-[85%] md:max-w-[75%] px-5 py-3.5 text-sm leading-relaxed shadow-sm ${isUser ? "bg-brand-600 text-white rounded-2xl rounded-tr-sm order-1" : "bg-white border border-slate-100 text-slate-700 rounded-2xl rounded-tl-sm order-2"}`;
 
-    const contentDiv = document.createElement("div");
-    contentDiv.className = "whitespace-pre-wrap font-sans prose"; 
+    const textContainer = document.createElement("div");
+    textContainer.className = "whitespace-pre-wrap font-sans prose prose-sm max-w-none answer-text-content";
     
-    // [CRITICAL] ใช้ innerHTML เพื่อให้ Browser เรนเดอร์ HTML Table ที่ Backend ส่งมา
-    contentDiv.innerHTML = text;
+    const tablesContainer = document.createElement("div");
+    tablesContainer.className = "mt-3 space-y-3 answer-tables-content";
     
-    bubble.appendChild(contentDiv);
+    let answerText = text;
+    let answerTables = options.tables || [];
+    
+    // ตรวจสอบทั้ง <table> หรือ &lt;table เผื่อการ escape
+    if (!answerTables.length && (text.includes("<table") || text.includes("&lt;table"))) {
+        const decodedText = text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+        const extracted = extractTablesFromHtml(decodedText);
+        answerText = extracted.text;
+        answerTables = extracted.tables;
+    }
+    
+    renderAnswerText(textContainer, answerText);
+    bubble.appendChild(textContainer);
+    
+    if (answerTables.length > 0) {
+        renderAnswerTables(tablesContainer, answerTables);
+        bubble.appendChild(tablesContainer);
+    }
 
-    // Meta / Sources Section
     if (!isUser && (options.intent || (options.sources && options.sources.length))) {
         const meta = document.createElement("div");
         meta.className = "mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2";
@@ -135,6 +271,7 @@ function appendMessage(role, text, options = {}) {
                 const isHidden = el.classList.contains('hidden');
                 el.classList.toggle('hidden');
                 toggleBtn.innerHTML = isHidden ? `<span>▼ ซ่อนแหล่งที่มา</span>` : `<span>▶ แสดงแหล่งที่มา (Sources)</span>`;
+                scrollToBottom(); // Scroll เมื่อเปิด source
             };
             meta.appendChild(toggleBtn);
 
@@ -167,14 +304,23 @@ function appendMessage(role, text, options = {}) {
     wrapper.appendChild(bubble);
     chatMessages.appendChild(wrapper);
 
-    // Dummy for scroll
+    // [FIX 5] จัดการเรื่อง Scroll ให้สุด
+    // ลบ dummy เก่าออกก่อนถ้ามี
+    const oldDummy = document.getElementById("scrollDummy");
+    if (oldDummy) oldDummy.remove();
+
+    // สร้าง dummy ใหม่ไว้ท้ายสุดเสมอ และให้ความสูงเยอะหน่อยกันข้อความจม
     const dummy = document.createElement("div");
-    dummy.style.height = "100px";
+    dummy.id = "scrollDummy";
+    dummy.style.height = "150px"; // เพิ่มความสูงตรงนี้เพื่อให้เลื่อนขึ้นไปได้อีก
+    dummy.style.width = "100%";
     dummy.style.flexShrink = "0";
     chatMessages.appendChild(dummy);
-    setTimeout(() => dummy.scrollIntoView({ behavior: "smooth", block: "end" }), 100);
+
+    scrollToBottom();
 }
 
+// [FIX 2] ปรับปรุงการส่ง ID ใน uploadFileToBackend (แต่ Logic หลักจะอยู่ที่ sendMessage)
 async function uploadFileToBackend(file, docId) {
     const formData = new FormData();
     formData.append("file", file);
@@ -188,14 +334,17 @@ async function uploadFileToBackend(file, docId) {
 async function sendMessage() {
     const text = chatInput.value.trim();
     if (!text && !attachedFile) return;
+    
     const mode = getMode();
-    const selectedDoc = getSelectedDocId();
+    // [FIX 3] ดึง ID จริงจาก Dropdown ที่เราแก้ไขใน fetchDocuments แล้ว
+    const selectedDocId = getSelectedDocId(); 
+    
     const fileToUpload = attachedFile;
     attachedFile = null;
     renderAttachment();
 
     if (text) appendMessage("user", text);
-    else if (fileToUpload) appendMessage("user", `📎 แนบไฟล์: ${fileToUpload.name}`);
+    else if (fileToUpload) appendMessage("user", `🔎 แนบไฟล์: ${fileToUpload.name}`);
     chatInput.value = "";
     chatInput.style.height = "auto";
 
@@ -203,10 +352,14 @@ async function sendMessage() {
         try {
             const defaultDocId = fileToUpload.name.replace(/\.[^.]+$/, "");
             const docId = prompt("ตั้งชื่อ Doc ID:", defaultDocId) || defaultDocId;
+            
             appendMessage("assistant", `⏳ กำลังอัปโหลด... (ID: ${docId})`, { label: "System" });
             const res = await uploadFileToBackend(fileToUpload, docId);
+            
             appendMessage("assistant", `✅ อัปโหลดสำเร็จ! Pages: ${res.page_count}`, { label: "System" });
-            fetchDocuments();
+            
+            // รีเฟรชเอกสารเพื่อให้ ID ใหม่ปรากฏใน Dropdown
+            await fetchDocuments();
         } catch (err) {
             console.error(err);
             appendMessage("assistant", "❌ Error: " + err.message, { label: "Error" });
@@ -226,24 +379,47 @@ async function sendMessage() {
                 <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             </div>
             <div class="bg-white border border-slate-100 text-slate-500 rounded-2xl rounded-tl-sm px-5 py-3.5 shadow-sm text-sm">กำลังค้นหาคำตอบ...</div>`;
-        chatMessages.appendChild(loadingWrapper);
-        requestAnimationFrame(() => loadingWrapper.scrollIntoView({ behavior: "smooth", block: "end" }));
+        
+        // Insert loading before dummy
+        const dummy = document.getElementById("scrollDummy");
+        if (dummy) {
+            chatMessages.insertBefore(loadingWrapper, dummy);
+        } else {
+            chatMessages.appendChild(loadingWrapper);
+        }
+        
+        scrollToBottom();
 
         try {
-            const payload = { query: text, doc_ids: selectedDoc ? [selectedDoc] : null, top_k: 20, mode: mode };
-            const res = await fetch("/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            // [FIX 4] ตรวจสอบ selectedDocId ก่อนส่ง (ถ้าเป็น "" คือเลือก All ให้ส่ง null)
+            const payload = { 
+                query: text, 
+                doc_ids: selectedDocId ? [selectedDocId] : null, 
+                top_k: 20, 
+                mode: mode 
+            };
+            
+            const res = await fetch("/ask", { 
+                method: "POST", 
+                headers: { "Content-Type": "application/json" }, 
+                body: JSON.stringify(payload) 
+            });
+            
             if (!res.ok) throw new Error("API Error: " + res.status);
             const data = await res.json();
-            document.getElementById(loadingId).remove();
             
-            // ส่ง sources ไปให้ appendMessage (ซึ่งจะไม่ทำอะไรกับตารางแล้ว แค่แสดงรายชื่อ source เฉยๆ)
+            const loadingEl = document.getElementById(loadingId);
+            if(loadingEl) loadingEl.remove();
+            
             appendMessage("assistant", data.answer || "(ไม่พบคำตอบ)", { 
                 intent: data.intent, 
-                sources: data.sources || [] 
+                sources: data.sources || [],
+                tables: data.tables || []
             });
             
         } catch (err) {
-            document.getElementById(loadingId).remove();
+            const loadingEl = document.getElementById(loadingId);
+            if(loadingEl) loadingEl.remove();
             appendMessage("assistant", "❌ Error: " + err.message, { label: "Error" });
         }
     }
@@ -254,26 +430,74 @@ async function loadHistory() {
     try {
         const res = await fetch(`/history?limit=50`);
         if (!res.ok) throw new Error("Load failed");
-        const data = await res.json();
-        if (!data.length) { historyBox.innerHTML = '<p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p>'; return; }
+        
+        let data = await res.json();
+        
+        // 🔄 จัดลำดับใหม่: ใหม่สุดอยู่บน (Newest first)
+        data = data.reverse(); 
+
+        if (!data.length) { 
+            historyBox.innerHTML = '<p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p>'; 
+            return; 
+        }
+
         historyBox.innerHTML = data.map((item) => `
             <div class="mb-4 pb-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 p-2 rounded transition cursor-default">
-              <div class="flex justify-between items-center mb-1"><span class="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">${item.mode || "Auto"}</span><span class="text-[10px] text-slate-400">${item.ts ? item.ts.substring(0, 10) : ""}</span></div>
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">${item.mode || "Auto"}</span>
+                <span class="text-[10px] text-slate-400">${item.ts ? item.ts.substring(0, 10) : ""}</span>
+              </div>
               <div class="font-medium text-slate-800 text-sm mb-1 line-clamp-2">Q: ${(item.query || "").replace(/\n/g, " ")}</div>
               <div class="text-slate-500 text-xs pl-2 border-l-2 border-brand-200 line-clamp-3">A: ${(item.answer || "").replace(/\n/g, " ")}</div>
             </div>`).join("");
-    } catch (err) { historyBox.innerHTML = `<p class="text-center text-red-400 mt-10">Load Error: ${err.message}</p>`; }
+    } catch (err) { 
+        historyBox.innerHTML = `<p class="text-center text-red-400 mt-10">Load Error: ${err.message}</p>`; 
+    }
 }
 
-// Event Listeners
+// =======================
+// 🖱️ Event Listeners
+// =======================
 sendBtn.onclick = () => sendMessage();
-chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + "px"; });
+
+chatInput.addEventListener("keydown", (e) => { 
+    if (e.key === "Enter" && !e.shiftKey) { 
+        e.preventDefault(); 
+        sendMessage(); 
+    } 
+});
+
+chatInput.addEventListener("input", () => { 
+    chatInput.style.height = "auto"; 
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + "px"; 
+});
+
 uploadBtn.onclick = () => fileInput.click();
-fileInput.onchange = (e) => { if (e.target.files[0]) { attachedFile = e.target.files[0]; renderAttachment(); } fileInput.value = ""; };
-toggleHistoryBtn.onclick = () => { if (historyVisible) hideHistoryPanel(); else showHistoryPanel(); };
+
+fileInput.onchange = (e) => { 
+    if (e.target.files[0]) { 
+        attachedFile = e.target.files[0]; 
+        renderAttachment(); 
+    } 
+    fileInput.value = ""; 
+};
+
+toggleHistoryBtn.onclick = () => { 
+    if (historyVisible) hideHistoryPanel(); else showHistoryPanel(); 
+};
+
 refreshHistoryBtn.onclick = () => loadHistory();
 
-// Init
+// ❌ แก้ไขจุดที่กดปิด History ไม่ได้
+if (closeHistoryBtn) {
+    closeHistoryBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        hideHistoryPanel();
+    });
+}
+
+// --- Init ---
 fetchDocuments();
-setTimeout(() => { appendMessage("assistant", "สวัสดีครับ/ค่ะ! 👋\n\n**Tip:** ถ้าต้องการค้นหาเฉพาะเอกสารใดเอกสารหนึ่ง สามารถเลือกได้ที่เมนูด้านบน นะครับ/ค่ะ", { label: "System" }); }, 500);
+setTimeout(() => { 
+    appendMessage("assistant", "สวัสดีครับ/ค่ะ! 👋\n\n**Tip:** ถ้าต้องการค้นหาเฉพาะเอกสารใดเอกสารหนึ่ง สามารถเลือกได้ที่เมนูด้านบน นะครับ/ค่ะ", { label: "System" }); 
+}, 500);

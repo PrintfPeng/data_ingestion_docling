@@ -16,7 +16,10 @@ semantic_enricher.py
 """
 
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 import re
 
 from .schema import IngestedDocument, TextBlock, TableBlock
@@ -44,7 +47,7 @@ def _get_gemini_model():
     try:
         import google.generativeai as genai
 
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
         return genai.GenerativeModel(GEMINI_MODEL)
     except Exception as e:
         print("[semantic_enricher] Cannot init Gemini:", e)

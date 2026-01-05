@@ -17,7 +17,10 @@ document_classifier.py
 """
 
 from typing import List, Optional
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 
 from ingestion.schema import IngestedDocument, TextBlock, DocumentMetadata
 
@@ -206,7 +209,7 @@ def classify_document_with_gemini(
         return classify_document_rule_based(doc)
 
     try:
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
     except Exception as e:
         print(f"[document_classifier] genai.configure failed: {e}")
         return classify_document_rule_based(doc)

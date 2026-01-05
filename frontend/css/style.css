@@ -39,13 +39,14 @@
     pointer-events: auto;
 }
 
-/* Table Styling (สำหรับแสดง HTML Table) */
+/* Table Styling (Legacy Support for .prose table) */
 .prose table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 0.5rem;
     margin-bottom: 0.5rem;
     font-size: 0.875rem; /* text-sm */
+    background-color: white; /* Added background */
 }
 .prose th {
     background-color: #f1f5f9; /* slate-100 */
@@ -59,10 +60,120 @@
     padding: 0.5rem 0.75rem;
     border: 1px solid #e2e8f0;
     color: #475569; /* slate-600 */
+    vertical-align: top; /* Added alignment */
 }
 .prose tr:nth-child(even) {
     background-color: #f8fafc; /* slate-50 */
 }
 .prose tr:hover {
     background-color: #f0f9ff; /* brand-50 */
+}
+
+/* ============================================
+   [NEW] Enhanced Table Rendering & Text Styles
+   (Added/Updated to support separated rendering)
+   ============================================ */
+
+/* Text Content Styling (Separated Text) */
+.answer-text-content {
+    line-height: 1.6;
+    color: #334155; /* Slate-700 for better readability */
+}
+
+.answer-text-content p {
+    margin-bottom: 0.75rem;
+}
+
+.answer-text-content p:last-child {
+    margin-bottom: 0;
+}
+
+/* Table Container Styling (Separated Tables) */
+.answer-tables-content table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    background: white;
+    margin: 0; /* Reset margin inside container */
+}
+
+.answer-tables-content table th,
+.answer-tables-content table td {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #e2e8f0;
+    text-align: left;
+    vertical-align: top;
+}
+
+.answer-tables-content table th {
+    background-color: #f1f5f9;
+    font-weight: 600;
+    color: #334155;
+    white-space: nowrap; /* Prevent headers from wrapping too much */
+}
+
+.answer-tables-content table td {
+    color: #475569;
+}
+
+.answer-tables-content table tbody tr:hover {
+    background-color: #f8fafc;
+}
+
+/* Details/Summary Animation (Collapsible Tables) */
+details summary {
+    list-style: none; /* Hide default marker */
+}
+details summary::-webkit-details-marker {
+    display: none;
+}
+
+details[open] summary .details-chevron {
+    transform: rotate(180deg);
+}
+
+.details-chevron {
+    transition: transform 0.2s ease;
+}
+
+/* Prose Enhancements */
+.prose {
+    max-width: none;
+}
+
+.prose strong {
+    font-weight: 600;
+    color: #1e293b; /* Slate-800 */
+}
+
+.prose em {
+    font-style: italic;
+    color: #64748b; /* Slate-500 */
+}
+
+.prose ul {
+    list-style-type: disc;
+    padding-left: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.prose ol {
+    list-style-type: decimal;
+    padding-left: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Mobile Responsive Adjustments */
+@media (max-width: 768px) {
+    .answer-tables-content table,
+    .prose table {
+        font-size: 0.75rem; /* Smaller text on mobile */
+    }
+    
+    .answer-tables-content table th,
+    .answer-tables-content table td,
+    .prose th,
+    .prose td {
+        padding: 0.375rem 0.5rem;
+    }
 }

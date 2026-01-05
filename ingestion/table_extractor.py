@@ -7,6 +7,7 @@ table_extractor.py
 - ใช้ Camelot อ่านตารางจาก PDF (วิธีเดิม)
 - [NEW] ใช้ Gemini Vision อ่านตารางจากภาพ (วิธีใหม่สำหรับตารางซับซ้อน)
 - [NEW] ทำความสะอาดภาษาไทย (ลบ \\n กลางคำ)
+- [NEW] AI-Powered Classification: ใช้ LLM จำแนกหมวดหมู่ตารางแทน Regex
 - แปลงตารางเป็น HTML (Display) และ Markdown (AI Context)
 - คืนค่า list[TableBlock]
 """
@@ -25,7 +26,10 @@ import google.generativeai as genai
 
 from .schema import TableBlock, BBox
 from .config import GOOGLE_API_KEY
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 # -------------------------------
 # Config / Heuristics
 # -------------------------------
@@ -33,6 +37,18 @@ from .config import GOOGLE_API_KEY
 MIN_ROWS = 2
 MIN_COLS = 2
 MAX_HEADER_SCAN_ROWS = 3
+
+# [NEW] Pattern สำหรับตรวจจับ header ของกลุ่มย่อยในตาราง (Still useful for splitting)
+HEADER_PATTERNS = [
+    r"ถือป.?ายสโลแกน",   # กลุ่มถือป้าย
+    r"ขบวนสาด",          # ขบวนแห่
+    r"แฟนซี",            # แฟนซี
+    r"📌.*ถือป.?าย",     # รูปแบบที่มี emoji
+    r"📌.*ขบวน",
+    r"📌.*แฟนซี",
+    r"สว\.?",            # สภานักเรียน/สว.
+    r"คนทำอุปกรณ์",
+]
 
 # [NEW] ฟังก์ชันทำความสะอาดข้อความภาษาไทย
 def _clean_thai_text(text: Any) -> str:
@@ -51,6 +67,9 @@ def _clean_thai_text(text: Any) -> str:
     # 3. ลบ space ซ้ำซ้อน
     text = re.sub(r'\s+', ' ', text)
     
+    # 4. ลบตัวอักษรขยะที่อาจติดมา (เช่น จุดไข่ปลาเยอะๆ)
+    text = re.sub(r'\.{3,}', '', text)
+    
     return text.strip()
 
 
@@ -60,18 +79,67 @@ def _has_meaningful_text(s: str) -> bool:
     s = str(s).strip()
     if not s:
         return False
+    # ต้องมีตัวหนังสือหรือตัวเลขอย่างน้อย 1 ตัว
     return any(ch.isalnum() for ch in s)
 
 
 # -------------------------------
-# Helper: Gemini Table Summarizer & Vision Extractor
+# [NEW] ฟังก์ชันแยกตารางเป็นกลุ่มย่อยตาม header patterns
+# -------------------------------
+def _split_rows_by_header(rows: list[list[Any]]) -> list[tuple[str, list[list[Any]]]]:
+    """
+    แยก rows ออกเป็นกลุ่มย่อยตาม header patterns
+    Returns: [(header_text, sub_rows), ...]
+    """
+    blocks = []
+    current_header = "Generic Section" # Default header
+    current_rows = []
+    
+    for r in rows:
+        # ตรวจ cell แรกว่าตรงกับ pattern ไหม (หรือ cell ใดๆ ในแถวแรกๆ)
+        # บางที header อาจจะอยู่ col 0 หรือ col 1
+        row_text = " ".join(str(c) for c in r)
+        
+        found_header = None
+        for p in HEADER_PATTERNS:
+            if re.search(p, row_text, re.IGNORECASE):
+                found_header = row_text # ใช้ทั้งแถวเป็น header ไปเลยเพื่อความครบถ้วน
+                break
+        
+        if found_header:
+            # เจอ header ใหม่ -> บันทึกกลุ่มเก่า
+            if current_rows:
+                blocks.append((current_header, current_rows))
+            
+            # เริ่มกลุ่มใหม่
+            current_header = _clean_thai_text(found_header) # Clean header ด้วย
+            current_rows = [] 
+            # (ไม่ add row นี้เข้า current_rows เพราะเป็น header)
+        else:
+            # แถวข้อมูลธรรมดา
+            # Clean ข้อมูลในแถว
+            cleaned_row = [_clean_thai_text(c) for c in r]
+            
+            # เช็คว่าแถวนี้มีข้อมูลที่มีความหมายไหม (ไม่ใช่ว่างเปล่า)
+            if any(_has_meaningful_text(c) for c in cleaned_row):
+                current_rows.append(cleaned_row)
+    
+    # บันทึกกลุ่มสุดท้าย
+    if current_rows:
+        blocks.append((current_header, current_rows))
+    
+    return blocks
+
+
+# -------------------------------
+# Helper: Gemini Table Summarizer & Vision Extractor & Classifier
 # -------------------------------
 
-def _get_gemini_model(model_name="gemini-2.0-flash"):
+def _get_gemini_model(model_name="gemini-2.5-flash"): # ใช้ 1.5-flash แทน 2.0 (ถ้ายังไม่มา)
     if not GOOGLE_API_KEY:
         return None
     try:
-        genai.configure(api_key=GOOGLE_API_KEY)
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
         return genai.GenerativeModel(model_name)
     except Exception as e:
         print(f"[table_extractor] Failed to init Gemini: {e}")
@@ -94,6 +162,43 @@ def _summarize_table(model, markdown_table: str) -> str:
         print(f"[table_extractor] Summarization failed: {e}")
         return ""
 
+# [NEW] AI Classification Function
+def _classify_category_with_llm(model, text_sample: str) -> str:
+    """
+    ใช้ AI จำแนกหมวดหมู่ของตารางจากข้อความตัวอย่าง (Header/Row)
+    คืนค่าเป็น English Keyword (Snake Case) เพื่อใช้ในการ Filter
+    """
+    if not model: return "generic_table"
+    
+    prompt = (
+        "คุณคือระบบจำแนกข้อมูลตาราง (Data Classifier) สำหรับงานกิจกรรมกีฬาสีและงานโรงเรียน\n"
+        f"จงวิเคราะห์ข้อความ Header หรือ Sample Data ต่อไปนี้: '{text_sample}'\n\n"
+        "ให้ระบุว่าตารางนี้น่าจะเกี่ยวกับอะไร โดยเลือกตอบเป็นภาษาอังกฤษ (snake_case) คำเดียว จากตัวเลือกต่อไปนี้ (หรือสร้างใหม่ถ้าจำเป็น):\n"
+        "- slogan_holder (คนถือป้าย, สโลแกน, ป้ายคณะสี)\n"
+        "- parade (ขบวนแห่, ขบวนพาเหรด, คนเดินขบวน)\n"
+        "- fancy (ชุดแฟนซี, การแต่งกายแฟนซี)\n"
+        "- student_council (สภานักเรียน, คณะกรรมการ, สว.)\n"
+        "- equipment (อุปกรณ์, พัสดุ, คนทำอุปกรณ์)\n"
+        "- budget (งบประมาณ, การเงิน, บัญชี)\n"
+        "- schedule (กำหนดการ, เวลา)\n"
+        "- staff (คณะทำงาน, สตาฟ)\n"
+        "- generic_table (ถ้าไม่แน่ใจ หรือเป็นตารางทั่วไป)\n"
+        "\nตอบเฉพาะคำศัพท์ (เช่น slogan_holder) ห้ามมีคำอธิบายอื่น"
+    )
+    try:
+        # Config temperature=0.0 เพื่อความแม่นยำและคงที่
+        response = model.generate_content(
+            prompt, 
+            generation_config=genai.types.GenerationConfig(temperature=0.0)
+        )
+        category = response.text.strip().lower()
+        # Clean response เผื่อ AI ตอบยาวเกิน (เอาเฉพาะตัวอักษรและ underscore)
+        category = re.sub(r"[^a-z_]", "", category)
+        return category if category else "generic_table"
+    except Exception as e:
+        print(f"[table_extractor] Classification failed: {e}")
+        return "generic_table"
+
 # [NEW] Vision Extraction Logic
 def _extract_table_with_vision(model, image: Image.Image) -> str:
     """ส่งรูปภาพตารางให้ Gemini Vision แปลงเป็น HTML"""
@@ -106,11 +211,17 @@ def _extract_table_with_vision(model, image: Image.Image) -> str:
     3. If there are checkmarks (✓), write "Yes" or use a check icon.
     4. Use these CSS classes: <table class="min-w-full text-sm text-left text-slate-600 border-collapse border border-slate-200">
     5. Merge cells (rowspan/colspan) exactly as seen in the image.
+    6. Ensure <thead> and <tbody> structure is correct.
     """
     try:
         response = model.generate_content([prompt, image])
         # ล้าง Markdown code block ออก
         html = response.text.replace("```html", "").replace("```", "").strip()
+        
+        # [Safety Check] ถ้า HTML ไม่สมบูรณ์ ให้คืนค่าว่าง
+        if "<table" not in html or "</table>" not in html:
+            return ""
+            
         return html
     except Exception as e:
         print(f"[table_extractor] Vision extraction failed: {e}")
@@ -118,10 +229,11 @@ def _extract_table_with_vision(model, image: Image.Image) -> str:
 
 
 # -------------------------------
-# Category detection & DataFrame helpers (Logic เดิม)
+# Category detection & DataFrame helpers (Logic เดิม - Deprecated but kept as fallback)
 # -------------------------------
 
 def _guess_table_category(columns: list[str], first_row: list[Any]) -> str:
+    # [UPDATED] ฟังก์ชันนี้อาจจะไม่ได้ใช้แล้วเพราะมี _classify_category_with_llm แต่เก็บไว้เป็น fallback
     header_lower = " ".join(columns).lower()
     # กันกรณี first_row ว่าง
     first_row_txt = " ".join(str(x) for x in first_row).lower() if first_row else ""
@@ -177,7 +289,7 @@ def _dataframe_to_columns_rows(df: pd.DataFrame) -> Tuple[list[str], list[list[A
 
 
 # -------------------------------
-# Main extraction (Modified to support Vision + Clean Text)
+# Main extraction (Modified to support Vision + Clean Text + AI Classify)
 # -------------------------------
 
 def extract_tables(
@@ -191,8 +303,8 @@ def extract_tables(
     if not path.exists():
         raise FileNotFoundError(f"PDF file not found: {path}")
 
-    # [NEW] เปิดใช้ Vision Model
-    gemini_vision = _get_gemini_model("gemini-2.0-flash") # หรือ gemini-1.5-pro ถ้ามีโควต้า
+
+    gemini_vision = _get_gemini_model("gemini-2.5-flash") 
     
     all_tables: List[TableBlock] = []
     
@@ -224,15 +336,23 @@ def extract_tables(
                 
                 # [IMPROVED] หาพื้นที่ตารางให้แม่นยำขึ้น
                 # ค้นหาคำว่า "ตารางที่" หรือ "Table" เพื่อระบุตำแหน่ง
-                text_instances = page.search_for("ตารางที่") + page.search_for("Table")
+                # หรือคำที่เป็น Header pattern ของเรา
+                text_instances = []
+                keywords = ["ตารางที่", "Table", "ลำดับ", "รายการ", "ชื่อ-สกุล"] + [p.replace(r".*","").replace(r".?","") for p in HEADER_PATTERNS]
+                
+                for kw in keywords:
+                    text_instances.extend(page.search_for(kw))
                 
                 areas_to_process = []
                 if text_instances:
-                    for rect in text_instances:
-                        # Crop พื้นที่ตาราง (กะเอาจากตำแหน่งคำว่า "ตารางที่" ลงไปด้านล่าง)
-                        # เพิ่มความสูงเป็น 700 เพื่อให้ครอบคลุมตารางใหญ่
-                        clip_rect = fitz.Rect(rect.x0, rect.y0, page.rect.width, min(rect.y0 + 700, page.rect.height))
-                        areas_to_process.append(clip_rect)
+                    # รวมกลุ่ม rect ที่ใกล้กัน
+                    # (logic อย่างง่าย: ถ้าเจอคำสำคัญ ให้ crop ตั้งแต่จุดนั้นลงไป)
+                    # เลือกจุดที่อยู่บนสุด
+                    min_y = min(r.y0 for r in text_instances)
+                    # Crop พื้นที่ตาราง (กะเอาจากตำแหน่งคำสำคัญลงไปด้านล่าง)
+                    # เพิ่มความสูงเป็น 800 หรือจนสุดหน้า
+                    clip_rect = fitz.Rect(0, max(0, min_y - 50), page.rect.width, page.rect.height)
+                    areas_to_process.append(clip_rect)
                 else:
                     # ถ้าไม่เจอคำว่าตาราง ลองสุ่มตรวจหาเส้น (Drawing)
                     # ถ้ามีเส้นเยอะๆ น่าจะมีตาราง
@@ -256,6 +376,12 @@ def extract_tables(
                     # สร้าง Summary จาก HTML ที่แกะได้
                     summary_text = _summarize_table(gemini_vision, html_content)
                     
+                    # [CRITICAL] ใช้ AI Classify หมวดหมู่
+                    # สำหรับ Vision เราอาจจะยังไม่มี Header Text ที่ชัดเจน
+                    # เราจะใช้ summary_text หรือ html_content บางส่วนส่งไป Classify
+                    sample_for_classify = summary_text if summary_text else html_content[:500]
+                    category = _classify_category_with_llm(gemini_vision, sample_for_classify)
+                    
                     table_counter += 1
                     table_id = f"tbl_{page_idx+1}_{table_counter:02d}"
                     
@@ -266,7 +392,7 @@ def extract_tables(
                         page=page_idx + 1,
                         name=f"Table {table_counter}",
                         section=None,
-                        category="vision_extracted",
+                        category=category, # ใช้ AI Category
                         columns=["AI_Extracted"],
                         rows=[["Data in HTML"]],
                         bbox=(clip_rect.x0, clip_rect.y0, clip_rect.x1, clip_rect.y1),
@@ -274,7 +400,8 @@ def extract_tables(
                             "html_content": html_content,
                             "markdown_content": html_content, # ใช้ HTML แทน Markdown ไปเลย
                             "summary": summary_text,
-                            "method": "gemini_vision"
+                            "method": "gemini_vision",
+                            "role": category # เก็บไว้ใช้ filter
                         },
                     ))
                     time.sleep(1) # Rate limit guard
@@ -312,45 +439,142 @@ def extract_tables(
             
             if len(columns) < MIN_COLS or len(rows) < MIN_ROWS: continue
 
-            # Create HTML & Markdown
-            try:
-                clean_df = pd.DataFrame(rows, columns=columns)
-            except:
-                clean_df = df
+            # [NEW] ตรวจสอบว่ามี header pattern ที่ต้องแยกกลุ่มย่อยไหม
+            sub_tables = _split_rows_by_header(rows)
             
-            markdown_content = clean_df.to_markdown(index=False)
-            html_content = clean_df.to_html(index=False, classes="min-w-full text-sm text-left text-slate-600 border-collapse border border-slate-200", border=0)
-            
-            # แต่ง CSS นิดหน่อย
-            html_content = html_content.replace('<thead>', '<thead class="bg-slate-100 text-slate-700 font-semibold">')
-            html_content = html_content.replace('<th>', '<th class="px-4 py-2 border border-slate-200">')
-            html_content = html_content.replace('<td>', '<td class="px-4 py-2 border border-slate-200 align-top">')
+            if sub_tables:
+                # กรณีเจอ header patterns -> แยกเป็นตารางย่อย
+                print(f"[table_extractor] Found {len(sub_tables)} sub-tables in table {table_index+1}")
+                
+                for header_text, sub_rows in sub_tables:
+                    if len(sub_rows) < 1: # ยอมรับแม้มีแค่ 1 แถวถ้ามี header ชัดเจน
+                        continue
+                    
+                    table_index += 1
+                    
+                    # สร้าง DataFrame สำหรับตารางย่อย
+                    # ใช้ column เดิมถ้าจำนวนตรงกัน ไม่งั้นสร้างใหม่
+                    try:
+                        if len(columns) == len(sub_rows[0]):
+                            clean_df = pd.DataFrame(sub_rows, columns=columns)
+                        else:
+                            clean_df = pd.DataFrame(sub_rows)
+                    except:
+                        clean_df = pd.DataFrame(sub_rows)
+                    
+                    # Generate HTML & Markdown (ใช้ logic เดิม)
+                    markdown_content = clean_df.to_markdown(index=False)
+                    html_content = clean_df.to_html(index=False, classes="min-w-full text-sm text-left text-slate-600 border-collapse border border-slate-200", border=0)
+                    
+                    # แต่ง CSS
+                    html_content = html_content.replace('<thead>', '<thead class="bg-slate-100 text-slate-700 font-semibold">')
+                    html_content = html_content.replace('<th>', '<th class="px-4 py-2 border border-slate-200">')
+                    html_content = html_content.replace('<td>', '<td class="px-4 py-2 border border-slate-200 align-top">')
+                    
+                    # Generate Summary
+                    summary_text = ""
+                    if gemini_model:
+                        summary_text = _summarize_table(gemini_model, markdown_content)
+                        time.sleep(1)
+                    
+                    # [CRITICAL UPDATE] ใช้ AI Classify หมวดหมู่แทนการ Hardcode
+                    # ส่ง Header + แถวแรกไปให้ AI ดูบริบท
+                    sample_text = f"Header: {header_text}\nData: {' '.join(map(str, sub_rows[0]))}"
+                    category = _classify_category_with_llm(gemini_model, sample_text)
+                    print(f"[table_extractor] Sub-Table {table_index} classified as: {category}")
+                    
+                    if gemini_model:
+                        time.sleep(1) # Rate limit guard รวมกันตรงนี้
+                    
+                    all_tables.append(TableBlock(
+                        id=f"tbl_{table_index:04d}",
+                        doc_id=doc_id,
+                        page=t.page,
+                        name=header_text,  # ใช้ชื่อ header เป็นชื่อตาราง
+                        section=None,
+                        category=category, # ใช้ AI Category
+                        columns=clean_df.columns.tolist(),
+                        rows=sub_rows,
+                        bbox=None,
+                        extra={
+                            "html_content": html_content,
+                            "markdown_content": markdown_content,
+                            "summary": summary_text,
+                            "method": "camelot",
+                            "sub_table_header": header_text,
+                            # เพิ่ม metadata เพื่อช่วย RAG filter
+                            "role": category # เก็บไว้ใช้ filter
+                        },
+                    ))
+            else:
+                # กรณีไม่เจอ header patterns -> ใช้โค้ดเดิม (ตารางเดียว)
+                try:
+                    clean_df = pd.DataFrame(rows, columns=columns)
+                except:
+                    clean_df = df
+                
+                markdown_content = clean_df.to_markdown(index=False)
+                html_content = clean_df.to_html(index=False, classes="min-w-full text-sm text-left text-slate-600 border-collapse border border-slate-200", border=0)
+                
+                # แต่ง CSS
+                html_content = html_content.replace('<thead>', '<thead class="bg-slate-100 text-slate-700 font-semibold">')
+                html_content = html_content.replace('<th>', '<th class="px-4 py-2 border border-slate-200">')
+                html_content = html_content.replace('<td>', '<td class="px-4 py-2 border border-slate-200 align-top">')
 
-            # Generate Summary
-            summary_text = ""
-            if gemini_model:
-                summary_text = _summarize_table(gemini_model, markdown_content)
-                time.sleep(1)
+                # Generate Summary
+                summary_text = ""
+                if gemini_model:
+                    summary_text = _summarize_table(gemini_model, markdown_content)
+                    # time.sleep(1)
 
-            table_index += 1
-            all_tables.append(TableBlock(
-                id=f"tbl_{table_index:04d}",
-                doc_id=doc_id,
-                page=t.page,
-                name=f"table_{table_index}",
-                section=None,
-                category=_guess_table_category(columns, rows[0] if rows else []),
-                columns=columns,
-                rows=rows,
-                bbox=None,
-                extra={
-                    "html_content": html_content,
-                    "markdown_content": markdown_content,
-                    "summary": summary_text,
-                    "method": "camelot"
-                },
-            ))
+                # [CRITICAL UPDATE] ใช้ AI Classify หมวดหมู่
+                # ส่ง Columns + แถวแรกไปให้ AI ดูบริบท
+                sample_text = f"Columns: {' '.join(columns)}\nData: {' '.join(map(str, rows[0]))}"
+                category = _classify_category_with_llm(gemini_model, sample_text)
+                print(f"[table_extractor] Table {table_index+1} classified as: {category}")
+                
+                if gemini_model:
+                    time.sleep(1)
+
+                table_index += 1
+                all_tables.append(TableBlock(
+                    id=f"tbl_{table_index:04d}",
+                    doc_id=doc_id,
+                    page=t.page,
+                    name=f"table_{table_index}",
+                    section=None,
+                    category=category, # ใช้ AI Category
+                    columns=columns,
+                    rows=rows,
+                    bbox=None,
+                    extra={
+                        "html_content": html_content,
+                        "markdown_content": markdown_content,
+                        "summary": summary_text,
+                        "method": "camelot",
+                        "role": category # เก็บไว้ใช้ filter
+                    },
+                ))
         
         if all_tables: break
 
     return all_tables
+
+# [NEW] Helper to convert TableBlock to text for embedding (RAG)
+def table_to_text(table):
+    lines = []
+    # Check extra safely
+    extra = getattr(table, "extra", {}) or {} 
+    if extra.get("summary"):
+        lines.append(extra["summary"])
+    
+    # Join columns
+    if table.columns:
+        lines.append(" | ".join(map(str, table.columns)))
+        
+    # Join rows (limit 5)
+    if table.rows:
+        for row in table.rows[:5]:
+            lines.append(" | ".join(map(str, row)))
+            
+    return "\n".join(lines)
