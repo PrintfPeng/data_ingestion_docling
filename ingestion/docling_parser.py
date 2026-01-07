@@ -1,66 +1,100 @@
 import os
-from typing import List, Optional
+import time
+import logging
 from pathlib import Path
+from typing import List, Dict, Any
 
-# Docling Core & Main imports
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import (
-    PdfPipelineOptions,
-    PictureDescriptionVlmOptions,
-)
-from docling_core.transforms.serializer.markdown import MarkdownDocSerializer
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
+
+# --- CONFIG ---
+ENABLE_OCR = True  
 
 class DoclingParser:
-    def __init__(self, output_dir: str = "ingested"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, output_dir="ingested_md", image_dir="ingested_images"):
+        self.output_dir = output_dir
+        self.image_dir = image_dir 
         
-        # 1. ตั้งค่า Pipeline สำหรับ PDF และ OCR ภาษาไทย
-        pipeline_options = PdfPipelineOptions(
-            do_ocr=True,
-            do_picture_description=True, # เปิด Semantic Enrichment สำหรับรูปภาพ
-            generate_picture_images=True, # บันทึกไฟล์รูปภาพแยกออกมา
-        )
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.image_dir, exist_ok=True) 
         
-        # ตั้งค่า VLM สำหรับอธิบายรูปภาพ (สามารถเปลี่ยนโมเดลได้ตามความเหมาะสม)
-        pipeline_options.picture_description_options = PictureDescriptionVlmOptions(
-            repo_id="HuggingFaceTB/SmolVLM-256M-Instruct",
-            prompt="Describe this picture in Thai. Be precise and concise.",
-        )
+        self.logger = logging.getLogger(__name__)
+        
+        # ตั้งค่า Pipeline
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = ENABLE_OCR
+        pipeline_options.do_table_structure = True
+        
+        # Config ให้สร้างรูปภาพ
+        pipeline_options.generate_page_images = True
+        pipeline_options.generate_picture_images = True
+        pipeline_options.images_scale = 2.0 
 
-        # 2. สร้าง Converter พร้อมรองรับภาษาไทย
         self.converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
             }
         )
 
-    def parse_file(self, file_path: str):
-        """แปลงไฟล์ PDF เป็น Markdown พร้อมคำบรรยายรูปภาพ"""
-        print(f"กำลังประมวลผล: {file_path}...")
+    def parse_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Return dict ที่มี:
+        - doc: Docling Document Object
+        - saved_images: List ของ dict {reference, path, page}
+        - markdown: string content
+        """
+        start_time = time.time()
+        file_path = str(Path(file_path).resolve())
+        file_name = Path(file_path).name
         
-        # เริ่มการแปลงเอกสาร
-        result = self.converter.convert(source=file_path)
-        doc = result.document
-        
-        # 3. ใช้ MarkdownDocSerializer เพื่อดึงเนื้อหาออกมา
-        # เนื้อหานี้จะรวมทั้งข้อความ ตาราง (ในรูปแบบ Markdown) และ Placeholder ของรูปภาพ
-        serializer = MarkdownDocSerializer(doc=doc)
-        ser_result = serializer.serialize()
-        
-        # บันทึกผลลัพธ์เป็นไฟล์ .md
-        file_name = Path(file_path).stem
-        output_path = self.output_dir / f"{file_name}_enriched.md"
-        
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(ser_result.text)
-            
-        print(f"สำเร็จ! บันทึกไฟล์ที่: {output_path}")
-        return ser_result.text
+        self.logger.info(f"Processing document with Docling: {file_name}")
+        print(f"[Docling] Parsing: {file_name} ...")
 
-# ตัวอย่างการใช้งาน
-if __name__ == "__main__":
-    parser = DoclingParser()
-    # ทดสอบกับไฟล์คู่มือ SHARP ของคุณ
-    # parser.parse_file("path/to/TINS-B784CBRZ (CHANG).pdf")
+        try:
+            # 1. Convert
+            conv_res = self.converter.convert(file_path)
+            doc = conv_res.document
+            
+            # 2. Save Images & Collect Metadata
+            saved_images = []
+            if hasattr(doc, 'pictures') and doc.pictures:
+                print(f"[Docling] Found {len(doc.pictures)} images. Saving...")
+                for i, picture in enumerate(doc.pictures):
+                    # ตั้งชื่อไฟล์รูป
+                    image_filename = f"{Path(file_name).stem}_img_{i+1}.png"
+                    image_save_path = os.path.join(self.image_dir, image_filename)
+                    
+                    # ดึงรูปและบันทึก
+                    img_obj = picture.get_image(doc)
+                    if img_obj:
+                        img_obj.save(image_save_path, "PNG")
+                        
+                        # เก็บข้อมูลไว้ return
+                        saved_images.append({
+                            "index": i,
+                            "path": image_save_path,
+                            "page": picture.prov[0].page_no if picture.prov else 1,
+                            "bbox": picture.prov[0].bbox.as_tuple() if picture.prov else None,
+                            "obj": picture # เก็บ object ไว้เผื่อใช้
+                        })
+            
+            # 3. Export Markdown (Optional: save to disk)
+            md_text = doc.export_to_markdown()
+            # output_path = os.path.join(self.output_dir, f"{Path(file_name).stem}_enriched.md")
+            # with open(output_path, "w", encoding="utf-8") as f:
+            #     f.write(md_text)
+                
+            elapsed = time.time() - start_time
+            print(f"[Docling] Finished in {elapsed:.2f}s")
+
+            return {
+                "doc": doc,
+                "saved_images": saved_images,
+                "markdown": md_text
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error processing {file_name}: {e}")
+            print(f"❌ Docling Error: {e}")
+            raise e

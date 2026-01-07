@@ -1,89 +1,197 @@
 from __future__ import annotations
 
-"""
-run_ingestion.py (Updated with OCR)
-"""
-
 import argparse
 import json
+import time
+from datetime import datetime
 from pathlib import Path
+import pandas as pd
 
-from ingestion.pdf_parser import parse_pdf
-from ingestion.table_extractor import extract_tables
-from ingestion.image_extractor import extract_images
-from ingestion.schema import IngestedDocument, TextBlock # <--- เพิ่ม TextBlock
+# Import Schema ของเรา
+from ingestion.schema import IngestedDocument, TextBlock, TableBlock, ImageBlock, DocumentMetadata
+
+# Import Docling Parser
+from ingestion.docling_parser import DoclingParser
 from ingestion.document_classifier import classify_document
 from ingestion.validator import validate_all
-from ingestion.ocr_extractor import ocr_extract_document # <--- เพิ่ม import นี้
+
+# Import Semantic Enricher
+from ingestion.semantic_enricher import tag_sections, categorize_text_blocks, normalize_tables, prepare_mapping_payload
 
 
-def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path) -> None:
+def docling_to_ingested_doc(doc_result: dict, doc_id: str, file_path: str) -> IngestedDocument:
     """
-    ฟังก์ชันเสริม: เรียก OCR แล้วเอาข้อความมาต่อท้ายใน doc.texts
+    แปลง Output จาก Docling ให้เป็น IngestedDocument Schema ของเรา
     """
-    try:
-        # เรียก OCR (มันจะ Auto-detect หน้าที่เป็นรูปภาพให้เองตาม Logic ใหม่ที่เราแก้)
-        ocr_result = ocr_extract_document(str(pdf_path))
-    except Exception as e:
-        print(f"[OCR] Skip OCR because error: {e}")
-        return
+    doc = doc_result["doc"]
+    saved_images = doc_result["saved_images"]
+    
+    # -------------------------------------------------------
+    # 1. Texts
+    # -------------------------------------------------------
+    text_blocks = []
+    counter = 0
+    
+    # Docling v2: doc.texts เก็บ list ของ TextItem
+    if hasattr(doc, "texts"):
+        for item in doc.texts:
+            content = item.text.strip()
+            if not content:
+                continue
+            
+            counter += 1
+            # พยายามดึงเลขหน้า
+            page = 1
+            bbox = None
+            if hasattr(item, "prov") and item.prov:
+                # prov อาจจะเป็น list หรือ single object ขึ้นอยู่กับ version
+                prov_list = item.prov if isinstance(item.prov, list) else [item.prov]
+                if prov_list:
+                    first_prov = prov_list[0]
+                    if hasattr(first_prov, "page_no"):
+                        page = first_prov.page_no
+                    if hasattr(first_prov, "bbox") and first_prov.bbox:
+                         if hasattr(first_prov.bbox, "as_tuple"):
+                             bbox = first_prov.bbox.as_tuple()
+            
+            text_blocks.append(TextBlock(
+                id=f"txt_{counter:04d}",
+                doc_id=doc_id,
+                page=page,
+                content=content,
+                bbox=bbox,
+                extra={"source": "docling"}
+            ))
+            
+    # Fallback ถ้า doc.texts ไม่มี
+    if not text_blocks:
+        print("[Warn] Using markdown fallback for text blocks")
+        md_text = doc_result.get("markdown", "")
+        if md_text:
+            md_lines = md_text.splitlines()
+            for i, line in enumerate(md_lines):
+                if line.strip():
+                    text_blocks.append(TextBlock(
+                        id=f"txt_md_{i:04d}",
+                        doc_id=doc_id,
+                        page=1, 
+                        content=line.strip(),
+                        extra={"source": "docling_markdown"}
+                    ))
 
-    texts = getattr(ocr_result, "texts", None)
-    if not texts:
-        print("[OCR] No OCR texts found (or API failed).")
-        return
+    # -------------------------------------------------------
+    # 2. Tables
+    # -------------------------------------------------------
+    table_blocks = []
+    if hasattr(doc, "tables"):
+        for i, tbl in enumerate(doc.tables):
+            # [FIXED] แก้เรื่อง Warning และ TypeError
+            try:
+                # พยายามส่ง doc=doc ตามที่ Docling รุ่นใหม่ต้องการ
+                df = tbl.export_to_dataframe(doc=doc)
+                html = tbl.export_to_html(doc=doc)
+            except Exception:
+                # ถ้าพัง (เช่น version ไม่ตรง) ให้ลองแบบไม่ส่ง doc
+                try:
+                    df = tbl.export_to_dataframe()
+                    html = tbl.export_to_html()
+                except Exception as e:
+                    print(f"[Warn] Table export failed: {e}")
+                    continue
+            
+            if df.empty:
+                continue
+                
+            header = [str(c) for c in df.columns]
+            rows = df.astype(str).values.tolist()
+            
+            page = 1
+            bbox = None
+            if hasattr(tbl, "prov") and tbl.prov:
+                prov_list = tbl.prov if isinstance(tbl.prov, list) else [tbl.prov]
+                if prov_list:
+                    p = prov_list[0]
+                    if hasattr(p, "page_no"): page = p.page_no
+                    if hasattr(p, "bbox") and p.bbox:
+                        if hasattr(p.bbox, "as_tuple"): bbox = p.bbox.as_tuple()
+            
+            table_blocks.append(TableBlock(
+                id=f"tbl_{i+1:04d}",
+                doc_id=doc_id,
+                page=page,
+                name=f"Table {i+1}",
+                category="docling_extracted",
+                columns=header,
+                rows=rows,
+                bbox=bbox,
+                extra={
+                    "html_content": html,
+                    "method": "docling"
+                }
+            ))
 
-    print(f"[OCR] Attaching {len(texts)} OCR pages to text blocks ...")
-
-    current_index = len(doc.texts)
-    doc_id = doc.metadata.doc_id
-
-    for item in texts:
-        content = (item.get("content") or "").strip()
-        if not content:
-            continue
-
-        page = int(item.get("page") or 1)
-        current_index += 1
-        block_id = f"ocr_{current_index:04d}"
-
-        # สร้าง TextBlock ใหม่จากผล OCR
-        tb = TextBlock(
-            id=block_id,
+    # -------------------------------------------------------
+    # 3. Images
+    # -------------------------------------------------------
+    image_blocks = []
+    for img_meta in saved_images:
+        image_blocks.append(ImageBlock(
+            id=f"img_{img_meta['index']+1:04d}",
             doc_id=doc_id,
-            page=page,
-            content=content,
-            section=None,
-            category=None,
-            bbox=None,
-            extra={"source": "ocr"},
-        )
-        doc.texts.append(tb)
+            page=img_meta["page"],
+            file_path=img_meta["path"],
+            caption="", 
+            bbox=img_meta["bbox"],
+            extra={"source": "docling"}
+        ))
+
+    # -------------------------------------------------------
+    # 4. Construct Document
+    # -------------------------------------------------------
+    
+    # [FIXED] แก้ Bug "method is not JSON serializable" ตรงนี้
+    page_count = 1
+    if hasattr(doc, "num_pages"):
+        if callable(doc.num_pages):
+            page_count = doc.num_pages() # เรียก () ถ้าเป็น method
+        else:
+            page_count = int(doc.num_pages) # แปลงเป็น int ถ้าเป็น property
+    else:
+        # Fallback
+        all_pages = [t.page for t in text_blocks] + [i.page for i in image_blocks]
+        if all_pages:
+            page_count = max(all_pages)
+
+    return IngestedDocument(
+        metadata=DocumentMetadata(
+            doc_id=doc_id,
+            file_name=Path(file_path).name,
+            doc_type="generic",
+            page_count=page_count,
+            ingested_at=datetime.now().isoformat(), 
+            source="docling"
+        ),
+        texts=text_blocks,
+        tables=table_blocks,
+        images=image_blocks
+    )
 
 
-def save_ingested_document(
-    doc: IngestedDocument,
-    output_root: str | Path = "ingested",
-) -> None:
+def save_ingested_document(doc: IngestedDocument, output_root: str | Path):
     output_root = Path(output_root)
-    doc_id = doc.metadata.doc_id
-
-    doc_dir = output_root / doc_id
+    doc_dir = output_root / doc.metadata.doc_id
     doc_dir.mkdir(parents=True, exist_ok=True)
 
     with (doc_dir / "metadata.json").open("w", encoding="utf-8") as f:
         json.dump(doc.metadata.to_dict(), f, ensure_ascii=False, indent=2)
-
     with (doc_dir / "text.json").open("w", encoding="utf-8") as f:
         json.dump([t.to_dict() for t in doc.texts], f, ensure_ascii=False, indent=2)
-
     with (doc_dir / "table.json").open("w", encoding="utf-8") as f:
         json.dump([tb.to_dict() for tb in doc.tables], f, ensure_ascii=False, indent=2)
-
     with (doc_dir / "image.json").open("w", encoding="utf-8") as f:
         json.dump([im.to_dict() for im in doc.images], f, ensure_ascii=False, indent=2)
-        
-    print(f"[run_ingestion] Saved output files to: {doc_dir}")
+    
+    print(f"[run_ingestion] Saved raw output to: {doc_dir}")
 
 
 def run_ingestion_pipeline(
@@ -94,73 +202,74 @@ def run_ingestion_pipeline(
 ) -> IngestedDocument:
     
     pdf_path = Path(pdf_path)
+    if not doc_id:
+        doc_id = pdf_path.stem
 
-    # 1) Parse PDF (Text layer)
-    print(f"[run_ingestion] Parsing PDF text from: {pdf_path}")
-    doc = parse_pdf(
-        file_path=pdf_path,
-        doc_type=doc_type,
-        doc_id=doc_id,
-        source="uploaded",
-    )
+    # ----------------------------------------------------
+    # 1. USE DOCLING
+    # ----------------------------------------------------
+    print(f"==== [1/3] Ingestion (Docling) ====")
+    image_dir = Path(output_root) / doc_id / "images"
+    
+    parser = DoclingParser(output_dir=str(Path(output_root)/doc_id), image_dir=str(image_dir))
+    
+    # Run Docling Parse
+    doc_result = parser.parse_file(str(pdf_path))
+    
+    # 🔥 [NEW] บันทึกไฟล์ Markdown (.md)
+    # ----------------------------------------------------
+    md_content = doc_result.get("markdown", "")
+    if md_content:
+        # ตั้งชื่อไฟล์เป็น {doc_id}.md
+        md_path = Path(output_root) / doc_id / f"{doc_id}.md"
+        # สร้างโฟลเดอร์ให้ชัวร์ว่ามีอยู่จริง
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(md_content)
+        print(f"[Docling] Saved Markdown to: {md_path}")
+    # ----------------------------------------------------
+    
+    # Convert to Schema
+    doc = docling_to_ingested_doc(doc_result, doc_id, str(pdf_path))
+    doc.metadata.doc_type = doc_type
 
-    # ---------------------------------------------------------
-    # 2) [NEW] เรียก OCR เสมอ (Logic ข้างในจะเช็คเองว่าต้องทำไหม)
-    # ---------------------------------------------------------
-    _attach_ocr_text(doc, pdf_path)
-    # ---------------------------------------------------------
+    print(f"[Docling] Extracted: Texts={len(doc.texts)}, Tables={len(doc.tables)}, Images={len(doc.images)}")
+    
+    save_ingested_document(doc, output_root)
 
-    effective_doc_id = doc.metadata.doc_id
-
-    # 3) Classify Type
+    # ----------------------------------------------------
+    # 2. ENRICHMENT
+    # ----------------------------------------------------
+    print(f"==== [2/3] Enrichment ====")
+    
+    # Classify Type
     try:
         predicted_type = classify_document(doc, use_gemini=True)
-        print(f"[run_ingestion] Predicted document type: {predicted_type}")
+        print(f"[Classifier] Predicted type: {predicted_type}")
         doc.metadata.doc_type = predicted_type
     except Exception as e:
-        print(f"[run_ingestion] Document classification warning: {e}")
+        print(f"[Classifier] Error: {e}")
 
-    # 4) Extract Tables
-    print(f"[run_ingestion] Extracting tables for doc_id={effective_doc_id}")
-    tables = extract_tables(
-        file_path=pdf_path,
-        doc_id=effective_doc_id,
-        doc_type=doc.metadata.doc_type,
-        pages="all",
-    )
-    doc.tables = tables
-
-    # 5) Extract Images
-    print(f"[run_ingestion] Extracting images for doc_id={effective_doc_id}")
-    images = extract_images(
-        file_path=pdf_path,
-        doc_id=effective_doc_id,
-        output_root=output_root,
-    )
-    doc.images = images
+    # Tag Sections
+    doc = tag_sections(doc, use_gemini=True)
+    doc = categorize_text_blocks(doc, use_gemini=True)
     
-    # 6) Validation
-    print(f"[run_ingestion] Validating document for doc_id={effective_doc_id}")
-    issues = validate_all(doc)
+    # Normalize Tables
+    doc.tables = normalize_tables(doc.tables)
     
-    doc_dir = Path(output_root) / effective_doc_id
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    with (doc_dir / "validation.json").open("w", encoding="utf-8") as f:
-        json.dump(issues, f, ensure_ascii=False, indent=2)
-
-    # 7) Save
-    print(f"[run_ingestion] Saving ingested document for doc_id={effective_doc_id}")
-    save_ingested_document(doc, output_root=output_root)
-
-    print(
-        f"[run_ingestion] Done. Texts={len(doc.texts)}, "
-        f"Tables={len(doc.tables)}, Images={len(doc.images)}",
-    )
+    # Save Enriched Data
+    doc_dir = Path(output_root) / doc_id
+    with (doc_dir / "text_enriched.json").open("w", encoding="utf-8") as f:
+        json.dump([t.to_dict() for t in doc.texts], f, ensure_ascii=False, indent=2)
+    with (doc_dir / "table_normalized.json").open("w", encoding="utf-8") as f:
+        json.dump([tb.to_dict() for tb in doc.tables], f, ensure_ascii=False, indent=2)
+        
+    print(f"==== [3/3] Done ====")
     return doc
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run full PDF ingestion pipeline.")
+def main():
+    parser = argparse.ArgumentParser(description="Run Docling ingestion pipeline.")
     parser.add_argument("pdf_path", help="Path to PDF file")
     parser.add_argument("--doc-type", default="generic", help="Document type hint")
     parser.add_argument("--doc-id", default=None, help="Override document ID")
