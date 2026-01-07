@@ -2,12 +2,13 @@ import os
 import time
 import logging
 from pathlib import Path
+from typing import List, Dict, Any
+
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
 
-# --- ⚙️ CONFIGURATION ---
-ENABLE_TABLE_RECOGNITION = False # ปิดเพื่อความเร็ว
+# --- CONFIG ---
 ENABLE_OCR = True  
 
 class DoclingParser:
@@ -23,7 +24,7 @@ class DoclingParser:
         # ตั้งค่า Pipeline
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = ENABLE_OCR
-        pipeline_options.do_table_structure = ENABLE_TABLE_RECOGNITION
+        pipeline_options.do_table_structure = True
         
         # Config ให้สร้างรูปภาพ
         pipeline_options.generate_page_images = True
@@ -36,23 +37,29 @@ class DoclingParser:
             }
         )
 
-    def parse_file(self, file_path: str):
+    def parse_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Return dict ที่มี:
+        - doc: Docling Document Object
+        - saved_images: List ของ dict {reference, path, page}
+        - markdown: string content
+        """
         start_time = time.time()
         file_path = str(Path(file_path).resolve())
         file_name = Path(file_path).name
         
-        self.logger.info(f"Processing document: {file_name}")
-        print(f"กำลังประมวลผล: {file_path}...")
+        self.logger.info(f"Processing document with Docling: {file_name}")
+        print(f"[Docling] Parsing: {file_name} ...")
 
         try:
             # 1. Convert
             conv_res = self.converter.convert(file_path)
             doc = conv_res.document
             
-            # 2. Save Images
+            # 2. Save Images & Collect Metadata
             saved_images = []
             if hasattr(doc, 'pictures') and doc.pictures:
-                print(f"🖼️  Found {len(doc.pictures)} images. Saving...")
+                print(f"[Docling] Found {len(doc.pictures)} images. Saving...")
                 for i, picture in enumerate(doc.pictures):
                     # ตั้งชื่อไฟล์รูป
                     image_filename = f"{Path(file_name).stem}_img_{i+1}.png"
@@ -62,23 +69,32 @@ class DoclingParser:
                     img_obj = picture.get_image(doc)
                     if img_obj:
                         img_obj.save(image_save_path, "PNG")
-                        saved_images.append(image_save_path)
-                        # ❌ ลบบรรทัด picture.common_metadata ออก เพื่อแก้ Error
+                        
+                        # เก็บข้อมูลไว้ return
+                        saved_images.append({
+                            "index": i,
+                            "path": image_save_path,
+                            "page": picture.prov[0].page_no if picture.prov else 1,
+                            "bbox": picture.prov[0].bbox.as_tuple() if picture.prov else None,
+                            "obj": picture # เก็บ object ไว้เผื่อใช้
+                        })
             
-            print(f"✅ Saved {len(saved_images)} images to {self.image_dir}")
-
-            # 3. Export Markdown
+            # 3. Export Markdown (Optional: save to disk)
             md_text = doc.export_to_markdown()
-            output_path = os.path.join(self.output_dir, f"{Path(file_name).stem}_enriched.md")
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(md_text)
+            # output_path = os.path.join(self.output_dir, f"{Path(file_name).stem}_enriched.md")
+            # with open(output_path, "w", encoding="utf-8") as f:
+            #     f.write(md_text)
                 
             elapsed = time.time() - start_time
-            print(f"ใช้เวลา: {elapsed:.2f} วินาที")
+            print(f"[Docling] Finished in {elapsed:.2f}s")
 
-            return doc
+            return {
+                "doc": doc,
+                "saved_images": saved_images,
+                "markdown": md_text
+            }
 
         except Exception as e:
             self.logger.error(f"Error processing {file_name}: {e}")
-            print(f"❌ Error: {e}")
+            print(f"❌ Docling Error: {e}")
             raise e
