@@ -34,3 +34,37 @@ class VectorStore:
             query_texts=query_texts,
             n_results=n_results
         )
+        
+        # =======================================================
+# ส่วนที่เพิ่ม: Adapter เพื่อให้ใช้งานร่วมกับ rag.py ได้
+# =======================================================
+
+# 1. สร้างคลาส Document หลอกๆ (เพื่อให้ rag.py ใช้งานได้)
+class Document:
+    def __init__(self, page_content, metadata):
+        self.page_content = page_content
+        self.metadata = metadata
+
+# 2. สร้างตัวแปร Global ไว้ใช้
+_store_instance = VectorStore()
+
+# 3. สร้างฟังก์ชัน search_similar ที่ rag.py ตามหา
+def search_similar(query: str, k: int = 5, **kwargs):
+    """
+    ฟังก์ชันแปลงการเรียกใช้จาก rag.py ให้เข้ากับ VectorStore ตัวเก่า
+    """
+    # เรียกใช้ query แบบเดิม
+    results = _store_instance.query(query_texts=[query], n_results=k)
+    
+    # แปลงผลลัพธ์จาก Dictionary เป็น List of Documents
+    documents = []
+    
+    # เช็คว่ามีข้อมูลไหม (ChromaDB จะคืนค่าเป็น list ซ้อน list)
+    if results and results.get('documents') and len(results['documents']) > 0:
+        docs_list = results['documents'][0]
+        metas_list = results['metadatas'][0] if results.get('metadatas') else [{}] * len(docs_list)
+        
+        for content, meta in zip(docs_list, metas_list):
+            documents.append(Document(page_content=content, metadata=meta))
+            
+    return documents
