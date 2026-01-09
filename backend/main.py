@@ -1,262 +1,123 @@
 from __future__ import annotations
-
-from typing import List, Optional, Literal
-from pathlib import Path
-import shutil
-import subprocess
-import sys
-import os
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import List, Optional, Any
+import shutil
+import os
+from pathlib import Path
 
-from .services.logger import append_log, read_logs
+# Import services
 from .services.rag import answer_question
-
-
-# -----------------------------------------------------------
-# FastAPI app & Static frontend
-# -----------------------------------------------------------
+from .scripts.ingest_doc import run_ingestion
 
 app = FastAPI(
     title="AI Data Ingestion Backend",
-    description="Backend for DB, Embeddings, RAG, API, and Evaluation",
+    description="Backend for DB, Embeddings, RAG, API",
     version="0.1.0",
 )
 
-# เสิร์ฟไฟล์ frontend (index.html + assets) ที่ /app/
-frontend_path = Path(__file__).resolve().parents[1] / "frontend"
-app.mount(
-    "/app",
-    StaticFiles(directory=str(frontend_path), html=True),
-    name="frontend",
+# Config CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# โฟลเดอร์สำหรับอัปโหลดไฟล์ PDF ใหม่
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# =================================================================
+# 1. Mount Frontend & Images
+# =================================================================
+current_dir = Path(__file__).resolve().parent  # backend/
+root_dir = current_dir.parent                  # root/
+frontend_path = root_dir / "frontend"
+
+app.mount("/app", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+
+os.makedirs("ingested", exist_ok=True)
+app.mount("/ingested", StaticFiles(directory="ingested"), name="ingested")
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/app/")
 
 
-# -----------------------------------------------------------
-# Health check
-# -----------------------------------------------------------
-
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "ok",
-        "service": "backend",
-        "version": "0.1.0",
-    }
-
-
-# -----------------------------------------------------------
-# /ask (RAG + Intent + Logging)
-# -----------------------------------------------------------
-
+# =================================================================
+# 2. Schema สำหรับ /ask (ปรับให้ยืดหยุ่นรับ Frontend ได้แน่นอน)
+# =================================================================
 class AskRequest(BaseModel):
     query: str
     doc_ids: Optional[List[str]] = None
-    top_k: int = 5
-    mode: Literal["auto", "text", "table", "both"] = "auto"
+    top_k: Optional[int] = 5
+    mode: Optional[str] = "auto" # ใช้ str ธรรมดาแทน Literal เพื่อลดปัญหา Error 400
 
-
-class AskResponse(BaseModel):
-    answer: str
-    sources: List[dict]
-    intent: str
-    mode: str
-
-
-@app.post("/ask", response_model=AskResponse)
+@app.post("/ask")
 async def ask(req: AskRequest):
-    # 1) เรียก RAG ตอบคำถาม
-    result = await answer_question(
-        query=req.query,
-        doc_ids=req.doc_ids,
-        top_k=req.top_k,
-        mode=req.mode,
-    )
+    # ตรวจสอบ query
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=400, detail="Missing query text")
 
-    # 2) เขียน log ลงไฟล์ (กันไม่ให้ทำ API พังถ้า log มีปัญหา)
     try:
-        append_log(
-            {
-                "query": req.query,
-                "doc_ids": req.doc_ids,
-                "top_k": req.top_k,
-                "mode": req.mode,
-                "answer": result.get("answer"),
-                "intent": result.get("intent"),
-                "sources": result.get("sources"),
-            }
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"[LOG_ERROR] {e!r}")
+        # [FIX] เรียกใช้ answer_question แบบ Synchronous (ไม่ใช้ await)
+        # และส่งเฉพาะ query เพราะ rag.py ตัวใหม่รับแค่ตัวเดียว
+        result = answer_question(req.query)
+        
+        # เติมข้อมูลที่ขาด (เพื่อให้ Frontend ไม่ error)
+        if "intent" not in result: result["intent"] = "qa"
+        if "mode" not in result: result["mode"] = req.mode
+        
+        return result
 
-    # 3) คืนค่าเป็น AskResponse (ตอบตรงตาม schema)
-    return AskResponse(**result)
-
-
-# -----------------------------------------------------------
-# /history  (อ่าน log ย้อนหลัง)
-# -----------------------------------------------------------
-
-class HistoryItem(BaseModel):
-    ts: str
-    query: str
-    answer: str
-    doc_ids: Optional[List[str]] = None
-    intent: Optional[str] = None
-    mode: Optional[str] = None
+    except Exception as e:
+        print(f"[ERROR] Ask failed: {e}")
+        return {
+            "answer": f"เกิดข้อผิดพลาด: {str(e)}",
+            "sources": [],
+            "intent": "error"
+        }
 
 
-@app.get("/history", response_model=List[HistoryItem])
-def get_history(limit: int = 50):
-    """
-    ดึง history Q&A ย้อนหลังใหม่สุดไม่เกิน limit รายการ
-    """
-    logs = read_logs(limit=limit)
-    items: List[HistoryItem] = []
-
-    for e in logs:
-        items.append(
-            HistoryItem(
-                ts=e.get("ts", ""),
-                query=e.get("query", ""),
-                answer=e.get("answer", ""),
-                doc_ids=e.get("doc_ids"),
-                intent=e.get("intent"),
-                mode=e.get("mode"),
-            )
-        )
-
-    return items
-
-
-# -----------------------------------------------------------
-# /upload  (อัปโหลด PDF -> ingestion -> ingest_doc)
-# -----------------------------------------------------------
-
+# =================================================================
+# 3. Upload Endpoint
+# =================================================================
 @app.post("/upload")
-async def upload_pdf(
+async def upload_document(
     file: UploadFile = File(...),
     doc_id: str = Form(...),
-    # เดิม: doc_type: str = Form("bank_statement")
-    # ใหม่: ให้ปล่อยว่างได้ ถ้าไม่ส่งมาจะ default = "generic_doc"
-    doc_type: str = Form(""),
-    # เปิดให้เลือกได้ว่าจะใช้ OCR pipeline หรือไม่
-    # - True  = ใช้ scripts.run_ingestion (มี OCR ช่วยอ่าน)
-    # - False = ใช้ scripts.run_all แบบเดิมที่ Peng เขียนไว้
-    use_ocr: bool = Form(True),
+    doc_type: str = Form("generic_doc"), 
+    use_ocr: bool = Form(True) # รับค่านี้ไว้แต่ไม่ใช้ก็ได้ กัน error
 ):
-    """
-    1) รับไฟล์ PDF จากผู้ใช้
-    2) เซฟลง uploads/<doc_id>.pdf
-    3) ถ้า use_ocr=True  -> ใช้ scripts.run_ingestion (OCR + ingestion)
-       ถ้า use_ocr=False -> ใช้ scripts.run_all (behavior เดิมทั้งชุด)
-    4) เรียก backend.scripts.ingest_doc เพื่อ re-index vector DB
-    """
-
-    # 0) normalize doc_type ให้มีค่าเสมอ
-    if not doc_type or not doc_type.strip():
-        doc_type = "generic_doc"
-
-    # 1) ตรวจไฟล์
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="รองรับเฉพาะไฟล์ PDF เท่านั้น")
-
-    if not doc_id.strip():
-        raise HTTPException(status_code=400, detail="ต้องระบุ doc_id")
-
-    # 2) เซฟไฟล์ลง uploads/
-    dest_path = UPLOAD_DIR / f"{doc_id}.pdf"
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    file_path = os.path.join(upload_dir, file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    print(f"[UPLOAD] Starting ingestion for: {doc_id}")
+    
     try:
-        with dest_path.open("wb") as f:
-            shutil.copyfileobj(file.file, f)
-    finally:
-        file.file.close()
-
-    # 3) เรียก ingestion pipeline
-    try:
-        if use_ocr:
-            # ใหม่: pipeline ที่มี OCR ช่วยอ่าน ก่อนทำ text.json / table.json / image.json
-            cmd = [
-                sys.executable,
-                "-m",
-                "scripts.run_ingestion",
-                str(dest_path),
-                "--doc-id",
-                doc_id,
-                "--doc-type",
-                doc_type,
-            ]
-            print(f"[UPLOAD] run with OCR: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-        else:
-            # เดิม: ใช้ run_all ของ Peng ทั้งชุด (ไม่มี OCR)
-            cmd = [
-                sys.executable,
-                "-m",
-                "scripts.run_all",
-                str(dest_path),
-                "--doc-id",
-                doc_id,
-                "--doc-type",
-                doc_type,
-            ]
-            print(f"[UPLOAD] run legacy pipeline (no OCR): {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-
-    except subprocess.CalledProcessError as e:  # noqa: PERF203
-        raise HTTPException(
-            status_code=500,
-            detail=f"ingestion pipeline error: {e}",
-        ) from e
-
-    # 4) re-index vector DB (backend.scripts.ingest_doc จะ scan โฟลเดอร์ ingested)
-    try:
-        cmd = [sys.executable, "-m", "backend.scripts.ingest_doc"]
-        print(f"[UPLOAD] re-index vector DB: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:  # noqa: PERF203
-        raise HTTPException(
-            status_code=500,
-            detail=f"re-index error (ingest_doc): {e}",
-        ) from e
-
-    return {
-        "ok": True,
-        "doc_id": doc_id,
-        "doc_type": doc_type,
-        "use_ocr": use_ocr,
-    }
+        run_ingestion(
+            pdf_path=file_path,
+            doc_id=doc_id,
+            doc_type=doc_type
+        )
+        return {"status": "success", "doc_id": doc_id, "message": "Ingestion complete"}
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/documents")
 def list_documents():
-    """
-    คืนรายชื่อเอกสารทั้งหมดที่มีในโฟลเดอร์ ingested/
-    เพื่อให้ Frontend เอาไปสร้าง Dropdown
-    """
     ingested_root = Path("ingested")
     docs = []
     if ingested_root.exists():
-        # Scan folder names inside 'ingested'
         for item in ingested_root.iterdir():
             if item.is_dir():
                 docs.append(item.name)
-    
-    # Sort for consistency
     docs.sort()
     return {"documents": docs}
-
-# -----------------------------------------------------------
-# Root redirect -> /app
-# -----------------------------------------------------------
-
-@app.get("/")
-def root():
-    # redirect ไปหน้า frontend หลัก
-    return RedirectResponse(url="/app/")

@@ -7,61 +7,78 @@ image_extractor.py
 - เปิดไฟล์ PDF
 - ดึงรูปภาพทุกภาพในเอกสาร
 - บันทึกลงโฟลเดอร์ (เช่น ingested/{doc_id}/images/img_001_001.png)
-- [NEW] ใช้ Gemini Vision (Flash) อ่านภาพและสร้าง Caption
-- แปลงผลลัพธ์เป็น list[ImageBlock] ตาม schema
+- [NEW] ใช้ Gemini Vision (Flash) อ่านภาพและสร้าง Caption (Markdown)
 """
 
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import fitz  # PyMuPDF
 import google.generativeai as genai
 from PIL import Image
 
-from .schema import ImageBlock
-from .config import GOOGLE_API_KEY  # ดึง Key จาก config กลาง
+# ตรวจสอบว่ามีไฟล์ schema.py และ config.py อยู่ในโฟลเดอร์เดียวกันหรือไม่
+# ถ้า Error เรื่อง Import ให้ตรวจสอบโครงสร้างโฟลเดอร์
+try:
+    from .schema import ImageBlock
+    from .config import GOOGLE_API_KEY
+except ImportError:
+    # Fallback สำหรับการรันไฟล์เดี่ยวๆ (เผื่อ Test)
+    from ingestion.schema import ImageBlock
+    from ingestion.config import GOOGLE_API_KEY
 
 # -------------------------------------------------------------------
 # Helper: Gemini Vision
 # -------------------------------------------------------------------
 
 def _get_gemini_vision_model():
-    """เตรียม Gemini 2.0 Flash สำหรับงาน Vision"""
+    """เตรียม Gemini Vision"""
     if not GOOGLE_API_KEY:
         print("[image_extractor] Warning: No GOOGLE_API_KEY. Image captioning will be skipped.")
         return None
 
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        # ใช้ Flash เพราะเร็วและถูก เหมาะกับงาน Caption จำนวนมาก
-        return genai.GenerativeModel("gemini-2.0-flash")
+        # [FIXED] เปลี่ยนจาก gemini-2.0-flash เป็น gemini-1.5-flash เพื่อแก้ปัญหา Quota/Limit
+        return genai.GenerativeModel("gemini-1.5-flash")
     except Exception as e:
         print(f"[image_extractor] Failed to init Gemini: {e}")
         return None
 
-def _generate_image_caption(model, image_path: Path) -> str:
-    """ส่งรูปไปให้ AI อธิบาย (Captioning)"""
-    if not model:
-        return ""
+def generate_image_description_md(model, image_input: Union[str, Path, Image.Image]) -> str:
+    """
+    [NEW] ส่งรูปไปให้ AI อธิบายเป็น Markdown Format
+    - Heading: ชื่อภาพ
+    - Key Details: รายละเอียดสำคัญ
+    - Summary: สรุป
+    """
+    if not model: return ""
 
     try:
-        # เปิดรูปด้วย PIL
-        img = Image.open(image_path)
-        
+        # รองรับทั้ง Path และ PIL Image Object
+        if isinstance(image_input, (str, Path)):
+            img = Image.open(image_input)
+        else:
+            img = image_input
+
         prompt = (
-            "อธิบายรูปภาพนี้โดยละเอียด: "
-            "1. ถ้าเป็นกราฟ/แผนภูมิ ให้บอกชื่อแกน ตัวเลขสำคัญ และแนวโน้ม "
-            "2. ถ้าเป็นรูปถ่าย/ไดอะแกรม ให้บอกว่าคืออะไรและมีองค์ประกอบสำคัญอะไรบ้าง "
-            "3. ถ้ามีข้อความในภาพ ให้อ่านและสรุปข้อความนั้นมาด้วย "
-            "ตอบเป็นภาษาไทย กระชับและได้ใจความ"
+            "Analyze this image and provide a description in Markdown format (Thai language):\n"
+            "1. **Heading**: A short, descriptive title for the image.\n"
+            "2. **Key Details**: Bullet points listing important text, numbers, or visual elements.\n"
+            "3. **Summary**: A brief sentence explaining what the image represents (e.g., trends, context).\n"
+            "Do not include generic phrases like 'This image shows...'. Start directly with the content."
         )
 
         response = model.generate_content([prompt, img])
         return response.text.strip()
     except Exception as e:
-        print(f"[image_extractor] Caption generation failed for {image_path.name}: {e}")
+        print(f"[image_extractor] Caption failed: {e}")
         return ""
+
+# (ฟังก์ชันเก่า เก็บไว้กันเหนียว หรือลบออกก็ได้ถ้าไม่ได้ใช้แล้ว)
+def _generate_image_caption(model, image_path: Path) -> str:
+    return generate_image_description_md(model, image_path)
 
 # -------------------------------------------------------------------
 # Main Extraction
@@ -102,7 +119,11 @@ def extract_images(
 
             for img_index, img in enumerate(images, start=1):
                 xref = img[0]  # image reference id ใน PDF
-                base_image = pdf_doc.extract_image(xref)
+                try:
+                    base_image = pdf_doc.extract_image(xref)
+                except Exception as e:
+                    print(f"[WARN] Failed to extract image xref={xref}: {e}")
+                    continue
 
                 img_bytes: bytes = base_image["image"]
                 img_ext: str = base_image.get("ext", "png")
@@ -124,11 +145,11 @@ def extract_images(
                 with open(file_path_on_disk, "wb") as f:
                     f.write(img_bytes)
                 
-                # [NEW] AI Captioning
+                # [NEW] AI Captioning (Markdown)
                 caption_text = ""
                 if vision_model:
-                    print(f"[image_extractor] Generating caption for {filename}...")
-                    caption_text = _generate_image_caption(vision_model, file_path_on_disk)
+                    print(f"[image_extractor] Generating MD caption for {filename}...")
+                    caption_text = generate_image_description_md(vision_model, file_path_on_disk)
                     # ใส่ delay นิดหน่อยกัน Rate Limit (ถ้าใช้ Free Tier)
                     time.sleep(1.0) 
 
@@ -137,7 +158,7 @@ def extract_images(
                     doc_id=doc_id,
                     page=page_number,
                     file_path=str(file_path_on_disk),
-                    caption=caption_text, # ใส่ผลลัพธ์จาก AI ลงไปตรงนี้!
+                    caption=caption_text, 
                     section=None,
                     category=None,
                     bbox=None,
@@ -181,5 +202,6 @@ if __name__ == "__main__":
     )
 
     print(f"Extracted {len(images)} images.")
+    # แปลงเป็น dict เพื่อ print
     data = [im.to_dict() for im in images]
     print(json.dumps(data, ensure_ascii=False, indent=2))

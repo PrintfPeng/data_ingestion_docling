@@ -16,26 +16,25 @@ class VectorStore:
     def __init__(self, persist_directory="chroma_db"):
         self.client = chromadb.PersistentClient(path=persist_directory)
         
-        # [FIX] ใช้ชื่อ text_collection ให้ชัดเจน
+        # Collection หลัก (เก็บ Text, Table, และ Image Description รวมกัน)
         self.text_collection = self.client.get_or_create_collection(
             name="document_chunks",
             metadata={"hnsw:space": "cosine"}
         )
+        # Collection สำรอง (เผื่อใช้อนาคต)
         self.image_collection = self.client.get_or_create_collection(
             name="image_chunks",
             metadata={"hnsw:space": "cosine"} 
         )
-        print(f"✅ VectorStore initialized at '{persist_directory}'")
 
     def add_documents(self, ids: List[str], documents: List[str], metadatas: List[Dict[str, Any]]):
         try:
-            # [FIX] แก้ self.collection -> self.text_collection
             self.text_collection.add(
                 ids=ids,
                 documents=documents,
                 metadatas=metadatas
             )
-            print(f"   Saved {len(ids)} text chunks to DB.")
+            print(f"   Saved {len(ids)} chunks to DB.")
         except Exception as e:
             print(f"   Error saving documents: {e}")
 
@@ -47,44 +46,57 @@ class VectorStore:
         )
 
 # =========================================================
-# GLOBAL HELPERS (เพิ่มให้ ingest_doc.py เรียกใช้ได้)
+# GLOBAL HELPERS
 # =========================================================
-
-_store_instance = VectorStore()
 
 def index_chunks(chunks: List[Any]):
     """บันทึก Chunks ลง DB"""
+    store = VectorStore()
+    
     text_ids, text_docs, text_metas = [], [], []
     
     for chunk in chunks:
-        # กรองเฉพาะ Text และ Table
-        if getattr(chunk, "source", "text") in ["text", "table"]:
+        # [FIX] เพิ่ม "image" เข้าไปใน list ที่ยอมรับ
+        if getattr(chunk, "source", "text") in ["text", "table", "image"]:
             c_id = getattr(chunk, "id", str(uuid.uuid4()))
             content = getattr(chunk, "content", "")
             
-            # แปลง Metadata ให้ ChromaDB รับได้ (ห้ามมี dict ซ้อน)
+            # ดึง Metadata
             raw_meta = getattr(chunk, "metadata", {})
             clean_meta = {}
             for k, v in raw_meta.items():
+                # แปลงค่าให้เป็น string/int/float/bool เท่านั้น
                 if isinstance(v, (str, int, float, bool)):
                     clean_meta[k] = v
                 else:
                     clean_meta[k] = str(v)
             
-            # เพิ่ม Field สำคัญสำหรับการค้นหา
+            # เพิ่ม Field สำคัญ
             clean_meta["source"] = getattr(chunk, "source", "text")
             clean_meta["doc_id"] = getattr(chunk, "doc_id", "unknown")
             clean_meta["page"] = getattr(chunk, "page", 1) or 1
             
+            # [NEW] สำหรับ Image ให้แน่ใจว่ามี file_path
+            if getattr(chunk, "source", "") == "image":
+                clean_meta["file_path"] = getattr(chunk, "file_path", "")
+
             text_ids.append(str(c_id))
             text_docs.append(content)
             text_metas.append(clean_meta)
 
     if text_ids:
-        _store_instance.add_documents(text_ids, text_docs, text_metas)
+        store.add_documents(text_ids, text_docs, text_metas)
 
-def search_similar(query: str, k: int = 5, doc_ids: Optional[List[str]] = None, sources: Optional[List[str]] = None, doc_types: Optional[List[str]] = None) -> List[Document]:
+def search_similar(
+    query: str, 
+    k: int = 5, 
+    doc_ids: Optional[List[str]] = None, 
+    sources: Optional[List[str]] = None, 
+    doc_types: Optional[List[str]] = None
+) -> List[Document]:
     """ค้นหาข้อมูล (Adapter สำหรับ RAG)"""
+    store = VectorStore()
+    
     where_conditions = []
     if doc_ids:
         if len(doc_ids) == 1: where_conditions.append({"doc_id": doc_ids[0]})
@@ -98,7 +110,7 @@ def search_similar(query: str, k: int = 5, doc_ids: Optional[List[str]] = None, 
     if len(where_conditions) == 1: final_where = where_conditions[0]
     elif len(where_conditions) > 1: final_where = {"$and": where_conditions}
 
-    results = _store_instance.query_text(query, n_results=k, where=final_where)
+    results = store.query_text(query, n_results=k, where=final_where)
     
     docs = []
     if results and results.get('documents') and len(results['documents']) > 0:
