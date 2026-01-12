@@ -1,109 +1,83 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="th">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>AI Data Ingestion – Smart Chat</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Document Assistant</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="css/style.css">
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Sarabun:wght@300;400;500;600&display=swap" rel="stylesheet">
-
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { sans: ['Sarabun', 'Inter', 'sans-serif'] },
-          colors: {
-            brand: { 50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc', 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1', 800: '#075985', 900: '#0c4a6e' }
-          }
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Sarabun', 'sans-serif'] },
+                    colors: {
+                        brand: { 500: '#3b82f6', 600: '#2563eb' }
+                    }
+                }
+            }
         }
-      }
-    }
-  </script>
-  <link rel="stylesheet" href="css/style.css"> 
+    </script>
 </head>
+<body class="bg-slate-50 h-screen flex flex-col overflow-hidden">
 
-<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden font-sans selection:bg-brand-100 selection:text-brand-900">
+    <header class="bg-white border-b border-slate-200 h-16 flex-none flex items-center justify-between px-6 shadow-sm z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold">AI</div>
+            <h1 class="text-lg font-semibold text-slate-700">Document Assistant</h1>
+        </div>
+        
+        <div class="flex gap-2">
+            <select id="docSelect" class="text-sm border border-slate-300 rounded-md px-2 py-1 outline-none bg-slate-50 text-slate-600">
+                <option value="">📚 ค้นหาทุกเอกสาร</option>
+            </select>
+        </div>
+    </header>
 
-  <header class="glass-header border-b border-slate-200 z-30 h-16 flex-none shadow-sm absolute top-0 w-full">
-    <div class="max-w-6xl mx-auto px-4 h-full flex items-center justify-between">
-      
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-indigo-600 flex items-center justify-center text-white shadow-lg">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-          </svg>
+    <main class="flex-1 overflow-hidden relative flex flex-col">
+        <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth pb-4">
+            <div class="flex justify-start w-full animate-fade-in-up">
+                <div class="w-8 h-8 rounded-full bg-blue-600 flex-none flex items-center justify-center text-white text-xs mr-3 mt-1 shadow-sm">AI</div>
+                <div class="bg-white border border-slate-200 text-slate-700 p-4 rounded-2xl rounded-tl-none shadow-sm max-w-[85%]">
+                    สวัสดีครับ! ผมคือ AI ผู้ช่วยค้นหาข้อมูลในเอกสาร 📄<br>
+                    มีอะไรให้ผมช่วยค้นหา หรือต้องการอัปโหลดไฟล์ PDF ใหม่บอกได้เลยครับ
+                </div>
+            </div>
         </div>
-        <div>
-          <h1 class="text-lg font-bold text-slate-800 leading-none">AI Ingestion</h1>
-          <p class="text-[10px] text-slate-500 font-medium tracking-wide mt-1">SMART RAG ASSISTANT</p>
-        </div>
-      </div>
-
-      <div class="flex items-center gap-3">
-        <div class="relative group hidden md:block">
-          <select id="docSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 outline-none cursor-pointer hover:bg-white transition shadow-sm w-40 truncate">
-            <option value="">📚 ค้นหาทุกเอกสาร (All)</option>
-          </select>
-        </div>
-        <div class="relative group hidden md:block">
-          <select id="modeSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 outline-none cursor-pointer hover:bg-white transition shadow-sm">
-            <option value="auto">Auto Mode</option>
-            <option value="text">Text Only</option>
-            <option value="table">Table Only</option>
-            <option value="both">Both</option>
-          </select>
-        </div>
-        <button id="toggleHistoryBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-        </button>
-      </div>
-    </div>
-  </header>
-
-  <div class="flex-1 flex overflow-hidden relative pt-16">
-    <main class="flex-1 flex flex-col relative min-w-0 bg-slate-50/50">
-      
-      <div id="chatMessages" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth pb-80"></div>
-
-      <div class="glass-input absolute bottom-0 left-0 w-full p-4 md:p-6 z-10">
-        <div class="max-w-4xl mx-auto">
-          <div id="attachmentInfo" class="mb-2 min-h-[24px]"></div>
-          <div class="relative bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 focus-within:ring-2 focus-within:ring-brand-100 transition-all">
-            <textarea id="chatInput" rows="1" class="block w-full py-4 pl-12 pr-14 bg-transparent border-none resize-none focus:ring-0 text-slate-700 placeholder-slate-400 text-sm md:text-base rounded-2xl" placeholder="พิมพ์คำถามของคุณที่นี่..."></textarea>
-            <button id="uploadBtn" class="absolute left-2 bottom-2.5 p-2 text-slate-400 hover:text-brand-600 hover:bg-slate-50 rounded-xl transition">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" /></svg>
-              <input id="fileInput" type="file" accept="application/pdf" class="hidden" />
-            </button>
-            <button id="sendBtn" class="absolute right-2 bottom-2.5 flex items-center justify-center w-9 h-9 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 text-white rounded-xl shadow-md transition-all active:scale-95">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.89 28.89 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" /></svg>
-            </button>
-          </div>
-          
-          <div class="md:hidden flex justify-center mt-3 gap-2">
-            <select id="docSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-slate-600 rounded-full px-3 py-1 outline-none shadow-sm max-w-[150px] truncate"><option value="">📚 All Docs</option></select>
-            <select id="modeSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-brand-600 rounded-full px-3 py-1 outline-none shadow-sm"><option value="auto">Auto</option><option value="text">Text</option><option value="table">Table</option><option value="both">Both</option></select>
-          </div>
-        </div>
-      </div>
     </main>
 
-    <aside id="historyPanel" class="absolute top-0 right-0 h-full w-full sm:w-[360px] bg-white border-l border-slate-200 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-40 flex flex-col pt-16">
-      <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-        <div class="flex items-center gap-2 text-slate-700">
-          <div class="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
-          <div><h2 class="font-bold text-sm">History</h2><p class="text-[10px] text-slate-400">ประวัติการสนทนาล่าสุด</p></div>
-        </div>
-        <div class="flex gap-1">
-          <button id="refreshHistoryBtn" class="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg></button>
-          <button onclick="hideHistoryPanel()" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
-        </div>
-      </div>
-      <div id="historyBox" class="flex-1 overflow-y-auto p-4 text-xs space-y-3 bg-white"><p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p></div>
-    </aside>
-  </div>
+    <footer class="bg-white border-t border-slate-200 p-4 flex-none z-20">
+        <div class="max-w-4xl mx-auto w-full relative">
+            
+            <div id="attachmentInfo" class="absolute -top-8 left-0 text-xs font-semibold px-2"></div>
 
-  <script src="js/app.js"></script>
+            <div class="relative flex items-end gap-2 bg-slate-100 p-2 rounded-xl border border-slate-200 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+                
+                <input id="fileInput" type="file" accept="application/pdf" class="hidden" />
+                <button id="uploadBtn" type="button" class="p-3 text-slate-400 hover:text-blue-600 hover:bg-white rounded-lg transition-colors" title="อัปโหลด PDF">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                </button>
+
+                <textarea id="chatInput" rows="1" class="w-full bg-transparent border-none focus:ring-0 text-slate-700 placeholder-slate-400 py-3 max-h-32 resize-none" placeholder="ถามคำถามเกี่ยวกับเอกสาร..."></textarea>
+
+                <button id="sendBtn" type="button" class="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                    </svg>
+                </button>
+            </div>
+            
+            <p class="text-[10px] text-center text-slate-400 mt-2">AI สามารถตอบคำถามจาก Text, ตาราง และรูปภาพในเอกสาร PDF</p>
+        </div>
+    </footer>
+
+    <script src="js/app.js"></script>
 </body>
 </html>

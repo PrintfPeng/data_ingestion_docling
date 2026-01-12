@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import os
 from pathlib import Path
+from typing import Union
 
 # เพิ่ม path ให้สามารถเรียก import folder 'scripts' ที่อยู่ root ได้
 sys.path.append(os.getcwd())
@@ -17,7 +18,7 @@ from backend.services.chunking import (
 )
 from backend.services.vector_store import index_chunks, search_similar
 
-# พยายาม import pipeline หลักจาก scripts/run_ingestion.py
+# พยายาม import pipeline หลัก
 try:
     from scripts.run_ingestion import run_ingestion_pipeline
 except ImportError:
@@ -26,15 +27,23 @@ except ImportError:
 
 
 # -------------------------------------------------------------------
-# [NEW] Function ที่ main.py เรียกใช้
+# [NEW] Function ที่ main.py เรียกใช้ (แก้ไขให้รับ output_root)
 # -------------------------------------------------------------------
-def run_ingestion(pdf_path: str, doc_id: str, doc_type: str = "generic_doc"):
+def run_ingestion(
+    pdf_path: str, 
+    doc_id: str, 
+    doc_type: str = "generic_doc", 
+    output_root: Union[str, Path] = "ingested"  # รับค่า Path มา
+):
     """
     ฟังก์ชันหลักสำหรับรับคำสั่งจาก API (main.py)
     1. เรียก Pipeline เพื่อแปลง PDF -> JSON (Ingested)
     2. เรียก Indexing เพื่อนำ JSON -> Vector DB
     """
     print(f"[run_ingestion] Processing {doc_id} from {pdf_path}...")
+    
+    # แปลงให้แน่ใจว่าเป็น Path object
+    output_root_path = Path(output_root)
 
     # 1. Run Pipeline (PDF -> JSONs)
     if run_ingestion_pipeline:
@@ -42,14 +51,14 @@ def run_ingestion(pdf_path: str, doc_id: str, doc_type: str = "generic_doc"):
             pdf_path=pdf_path,
             doc_type=doc_type,
             doc_id=doc_id,
-            output_root="ingested"
+            output_root=output_root_path  # ส่ง Path ต่อไปให้ Pipeline
         )
     else:
         raise ImportError("ไม่พบฟังก์ชัน run_ingestion_pipeline ตรวจสอบว่ามีไฟล์ scripts/run_ingestion.py หรือไม่")
 
     # 2. Indexing (JSONs -> VectorDB)
-    # หาโฟลเดอร์ผลลัพธ์
-    base_dir = Path("ingested") / doc_id
+    # --- [FIX] ใช้ output_root_path แทนการ hardcode ---
+    base_dir = output_root_path / doc_id
     
     if not base_dir.exists():
          raise FileNotFoundError(f"Ingestion failed? ไม่พบโฟลเดอร์ {base_dir}")
@@ -73,7 +82,7 @@ def run_ingestion(pdf_path: str, doc_id: str, doc_type: str = "generic_doc"):
 
 
 # -------------------------------------------------------------------
-# CONFIG & Helpers (ของเดิม)
+# CONFIG & Helpers (ของเดิม - ปรับให้รองรับ path ถ้าจำเป็น)
 # -------------------------------------------------------------------
 DOCS: list[tuple[str, str]] = []
 
@@ -92,12 +101,13 @@ def discover_docs_from_ingested(root: str = "ingested") -> list[tuple[str, str]]
 
 def get_docs_to_ingest() -> list[tuple[str, str]]:
     if DOCS: return DOCS
+    # ถ้าจะเทส manual ให้แก้ path ตรงนี้ด้วยถ้าต้องการ
     return discover_docs_from_ingested("ingested")
 
 def check_ingested_folder(base_dir: str, doc_id: str) -> bool:
     base_path = Path(base_dir)
     if not (base_path / "metadata.json").exists(): return False
-    return True # ลดเงื่อนไขลงเพื่อให้ง่ายต่อการทดสอบ
+    return True 
 
 # -------------------------------------------------------------------
 # main (สำหรับรัน manual)
