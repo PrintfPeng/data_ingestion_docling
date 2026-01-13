@@ -1,118 +1,112 @@
+# backend/services/rag.py
 import google.generativeai as genai
-import json
+import re
+import os
 from pathlib import Path
 from ingestion.config import GOOGLE_API_KEY
 from .vector_store import search_similar
 
+# [จุดสำคัญที่ 2] ตรวจสอบ path นี้ให้ตรงกับเครื่องคุณ
+INGESTED_PATH = Path(r"D:\DATA_INGES\ingested")
+
 def answer_question(question: str) -> dict:
-    """
-    ค้นหาคำตอบและดึงรูปภาพโดยการอ่าน mapping จากไฟล์ image.json
-    """
+    print(f"\n[RAG] 🔍 Query: {question}")
+    
     # 1. Search Vector DB
     try:
         relevant_docs = search_similar(question, k=5)
     except Exception as e:
-        print(f"[RAG] Search error: {e}")
-        return {"answer": f"Error: {e}", "sources": [], "intent": "error"}
+        return {"answer": f"Error searching database: {e}", "sources": [], "intent": "error"}
     
-    # 2. Prepare Context
     context_text = ""
     sources_data = []
-    
-    # เก็บ doc_id และ page ที่เกี่ยวข้องไว้ค้นรูป
-    # format: { "doc_id": {page1, page2, ...} }
     doc_pages_map = {} 
     
     for doc in relevant_docs:
-        content = doc.page_content.replace("\n", " ")
         meta = doc.metadata if hasattr(doc, "metadata") else {}
-        
-        source_type = meta.get("source", "unknown")
-        page = meta.get("page", "?")
-        doc_id = meta.get("doc_id") 
-        
-        # เก็บข้อมูล Source
+        content = doc.page_content.replace("\n", " ")
+        doc_id = meta.get("doc_id")
+        try: page = int(meta.get("page", 0))
+        except: page = 0
+            
         sources_data.append({
-            "content": content[:300] + "...", 
-            "source": source_type,
+            "content": content[:200] + "...", 
             "page": page,
             "doc_id": doc_id,
             "metadata": meta 
         })
-        context_text += f"--- Source: {source_type.upper()} (Page {page}) ---\n{content}\n\n"
+        context_text += f"--- Page {page} ---\n{content}\n\n"
 
-        # บันทึก page ที่เจอเพื่อไปหารูป
-        if doc_id and str(page).isdigit():
-            if doc_id not in doc_pages_map:
-                doc_pages_map[doc_id] = set()
-            doc_pages_map[doc_id].add(int(page))
+        if doc_id and page > 0:
+            if doc_id not in doc_pages_map: doc_pages_map[doc_id] = set()
+            doc_pages_map[doc_id].add(page)
 
-    # 3. [NEW LOGIC] Find Images via image.json
+    # 2. Scan Directory for Images (หารูปจากโฟลเดอร์)
     related_images = []
     processed_urls = set()
 
     for doc_id, pages in doc_pages_map.items():
-        # Path ไปยังไฟล์ image.json ของเอกสารนั้น
-        image_json_path = Path("ingested") / doc_id / "image.json"
-        
-        if image_json_path.exists():
-            try:
-                # โหลดข้อมูลรูปทั้งหมดของเอกสาร
-                images_metadata = json.loads(image_json_path.read_text(encoding="utf-8"))
+        images_dir = INGESTED_PATH / doc_id / "images"
+        if images_dir.exists():
+            for img_file in images_dir.iterdir():
+                if img_file.suffix.lower() not in ['.png', '.jpg', '.jpeg']: continue
                 
-                # คัดกรองเฉพาะรูปที่อยู่หน้าที่เราสนใจ
-                for img_item in images_metadata:
-                    img_page = img_item.get("page")
-                    # เช็คว่ารูปนี้อยู่ในหน้าที่ AI ใช้ตอบคำถามหรือไม่
-                    if img_page in pages:
-                        # ดึง Path รูปภาพ
-                        # ใน json อาจเก็บเป็น "images/doc/img.png" หรือ full path
-                        raw_path = img_item.get("file_path") or img_item.get("image_path")
-                        if raw_path:
-                            # แปลง Path ให้เป็น URL ที่ Frontend เข้าถึงได้
-                            # เราต้องตัดให้เหลือแค่ part หลัง 'ingested' หรือใช้ชื่อไฟล์
-                            p = Path(raw_path)
-                            # สร้าง URL: /ingested/{doc_id}/images/{filename}
-                            img_url = f"/ingested/{doc_id}/images/{p.name}"
-                            
+                # Regex หาเลขหน้า
+                match = re.search(r'(?:_p|page_?)(\d+)', img_file.name)
+                if match:
+                    try:
+                        file_page = int(match.group(1))
+                        if file_page in pages:
+                            img_url = f"/ingested/{doc_id}/images/{img_file.name}"
                             if img_url not in processed_urls:
                                 processed_urls.add(img_url)
                                 related_images.append({
                                     "url": img_url,
-                                    "page": img_page,
-                                    "doc_id": doc_id,
-                                    "caption": img_item.get("caption", "")
+                                    "page": file_page,
+                                    "doc_id": doc_id
                                 })
-            except Exception as e:
-                print(f"[RAG] Error reading image.json for {doc_id}: {e}")
+                                print(f"[RAG] 📸 Found image: {img_file.name}")
+                    except: pass
 
-    # 4. Generate Answer
-    if not GOOGLE_API_KEY:
-        return {"answer": "Missing API Key", "sources": sources_data, "intent": "config_error"}
-        
-    try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        
-        prompt = (
-            f"Context information is below.\n---------------------\n{context_text}\n---------------------\n"
-            f"Answer the query based on the context. If referring to a diagram, describe it from the text context.\n"
-            f"Query: {question}\nAnswer (in Thai):"
-        )
-        
-        # Fallback Models logic
-        model_candidates = ["gemini-2.5-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-2.0-flash"]
-        answer = ""
-        for m in model_candidates:
-            try:
-                model = genai.GenerativeModel(m)
-                answer = model.generate_content(prompt).text
-                break
-            except: continue
+    # 3. Generate Answer (แก้ Error 404 ด้วยการลองหลายๆ Model)
+    answer = "ไม่สามารถเชื่อมต่อกับ AI ได้ในขณะนี้"
+    
+    if GOOGLE_API_KEY:
+        try:
+            genai.configure(api_key=GOOGLE_API_KEY)
             
-        if not answer: answer = "ขออภัย ไม่สามารถประมวลผลคำตอบได้ในขณะนี้"
+            # [จุดสำคัญที่ 3] รายชื่อโมเดลสำรอง (ถ้าตัวแรกไม่ได้ จะลองตัวถัดไป)
+            models_to_try = [
+                "gemini-2.0-flash",           # ใหม่ล่าสุด
+                "gemini-2.0-flash-lite-preview-02-05", 
+                "gemini-1.5-flash",           # มาตรฐาน
+                "gemini-1.5-flash-001",       # ชื่อเต็ม (บางทีต้องใช้ตัวนี้)
+                "gemini-1.5-flash-latest"     
+            ]
+            
+            success = False
+            last_error = ""
 
-    except Exception as e:
-        answer = f"เกิดข้อผิดพลาด: {str(e)}"
+            for model_name in models_to_try:
+                try:
+                    # print(f"[RAG] Trying model: {model_name}...")
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(
+                        f"Context:\n{context_text}\n\nQuestion: {question}\nAnswer (in Thai):"
+                    )
+                    answer = response.text
+                    success = True
+                    break # หยุดถ้าสำเร็จ
+                except Exception as e:
+                    last_error = str(e)
+                    continue
+            
+            if not success:
+                print(f"[RAG] All models failed. Last error: {last_error}")
+                answer = f"ขออภัย เกิดข้อผิดพลาดจาก Google AI (404/Quota): {last_error}"
+
+        except Exception as e:
+            answer = f"System Error: {str(e)}"
 
     return {
         "answer": answer,

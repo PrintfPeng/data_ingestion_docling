@@ -29,10 +29,12 @@ root_dir = current_dir.parent
 frontend_path = root_dir / "frontend"
 app.mount("/app", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
-# --- [FIX: แก้ Path ให้เป็น D:] ---
+# --- [FIX] กำหนด Path ตรงนี้ให้ชัดเจน ---
 INGESTED_ROOT = Path(r"D:\DATA_INGES\ingested")
 os.makedirs(INGESTED_ROOT, exist_ok=True)
-app.mount("/ingested", StaticFiles(directory="ingested"), name="ingested")
+
+# [FIX] ใช้ str(INGESTED_ROOT) เพื่อให้ Mount ไปที่ D:\... จริงๆ
+app.mount("/ingested", StaticFiles(directory=str(INGESTED_ROOT)), name="ingested")
 
 
 @app.get("/")
@@ -72,7 +74,6 @@ async def upload_document(
     
     print(f"[UPLOAD] Processing: {doc_id}")
     try:
-        # ส่ง INGESTED_ROOT (Path D:) ไปให้ script
         run_ingestion(
             pdf_path=file_path,
             doc_id=doc_id,
