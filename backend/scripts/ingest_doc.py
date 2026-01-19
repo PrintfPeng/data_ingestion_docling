@@ -7,33 +7,52 @@ import os
 from pathlib import Path
 from typing import Union
 
-# เพิ่ม path ให้สามารถเรียก import folder 'scripts' ที่อยู่ root ได้
-sys.path.append(os.getcwd())
+# --- [FIX] การตั้งค่า Path ให้แม่นยำขึ้น ---
+# หา Root Directory จากตำแหน่งไฟล์นี้: backend/scripts/ingest_doc.py -> parents[2] คือ Root Project
+current_file = Path(__file__).resolve()
+root_dir = current_file.parents[2]
 
-from backend.services.loader import load_document_bundle
-from backend.services.chunking import (
-    image_items_to_chunks,
-    table_items_to_chunks,
-    text_items_to_chunks,
-)
-from backend.services.vector_store import index_chunks, search_similar
+# เพิ่ม Root เข้า sys.path เป็นลำดับแรก เพื่อให้ Python หา folder 'scripts' และ 'backend' เจอแน่นอน
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 
-# พยายาม import pipeline หลัก
+# --- Import Services ---
 try:
+    from backend.services.loader import load_document_bundle
+    from backend.services.chunking import (
+        image_items_to_chunks,
+        table_items_to_chunks,
+        text_items_to_chunks,
+    )
+    from backend.services.vector_store import index_chunks
+except ImportError as e:
+    print(f"[CRITICAL] System Import Error (Services): {e}")
+    raise e
+
+# --- [FIX] Import Pipeline แบบแสดง Error จริง ---
+try:
+    # พยายาม import scripts.run_ingestion
     from scripts.run_ingestion import run_ingestion_pipeline
-except ImportError:
-    print("[WARN] ไม่สามารถ import scripts.run_ingestion ได้ (อาจต้องเช็ค path)")
+    print("[ingest_doc] Successfully imported run_ingestion_pipeline")
+except ImportError as e:
+    # พิมพ์ Error ตัวเต็มออกมาเพื่อ debug แทนที่จะข้ามไปเฉยๆ
+    print(f"\n[ERROR] ไม่สามารถ import scripts.run_ingestion ได้!")
+    print(f"[DEBUG] Root Dir: {root_dir}")
+    print(f"[DEBUG] Sys Path: {sys.path[:3]}...")
+    print(f"[DEBUG] Exception Details: {e!r}\n")
+    
+    # กำหนดเป็น None เพื่อให้รู้ว่าโหลดไม่สำเร็จ
     run_ingestion_pipeline = None
 
 
 # -------------------------------------------------------------------
-# [NEW] Function ที่ main.py เรียกใช้ (แก้ไขให้รับ output_root)
+# Function ที่ main.py เรียกใช้
 # -------------------------------------------------------------------
 def run_ingestion(
     pdf_path: str, 
     doc_id: str, 
     doc_type: str = "generic_doc", 
-    output_root: Union[str, Path] = "ingested"  # รับค่า Path มา
+    output_root: Union[str, Path] = "ingested"
 ):
     """
     ฟังก์ชันหลักสำหรับรับคำสั่งจาก API (main.py)
@@ -47,105 +66,65 @@ def run_ingestion(
 
     # 1. Run Pipeline (PDF -> JSONs)
     if run_ingestion_pipeline:
-        run_ingestion_pipeline(
-            pdf_path=pdf_path,
-            doc_type=doc_type,
-            doc_id=doc_id,
-            output_root=output_root_path  # ส่ง Path ต่อไปให้ Pipeline
-        )
+        try:
+            run_ingestion_pipeline(
+                pdf_path=pdf_path,
+                doc_type=doc_type,
+                doc_id=doc_id,
+                output_root=output_root_path
+            )
+        except Exception as e:
+            print(f"[ERROR] Pipeline Execution Failed: {e}")
+            raise e
     else:
-        raise ImportError("ไม่พบฟังก์ชัน run_ingestion_pipeline ตรวจสอบว่ามีไฟล์ scripts/run_ingestion.py หรือไม่")
+        # ถ้า import ไม่ผ่าน ให้แจ้ง Error ชัดเจน (API จะได้ return 500 พร้อม message)
+        raise ImportError(
+            "ฟังก์ชัน run_ingestion_pipeline ไม่ถูกโหลด (ตรวจสอบ Log เพื่อดูสาเหตุ ImportError ของ scripts.run_ingestion)"
+        )
 
     # 2. Indexing (JSONs -> VectorDB)
-    # --- [FIX] ใช้ output_root_path แทนการ hardcode ---
     base_dir = output_root_path / doc_id
     
     if not base_dir.exists():
-         raise FileNotFoundError(f"Ingestion failed? ไม่พบโฟลเดอร์ {base_dir}")
+         raise FileNotFoundError(f"Ingestion failed? ไม่พบโฟลเดอร์ผลลัพธ์ที่ {base_dir}")
          
     # โหลดข้อมูล (Bundle)
-    bundle = load_document_bundle(str(base_dir), doc_id)
-    
-    # แปลงเป็น Chunks
-    text_chunks = text_items_to_chunks(bundle)
-    table_chunks = table_items_to_chunks(bundle)
-    image_chunks = image_items_to_chunks(bundle)
-    
-    all_chunks = text_chunks + table_chunks + image_chunks
-    
-    # บันทึกลง ChromaDB
-    if all_chunks:
-        index_chunks(all_chunks)
-        print(f"[run_ingestion] Indexed {len(all_chunks)} chunks for {doc_id}.")
-    else:
-        print(f"[WARN] No chunks found for {doc_id}.")
+    try:
+        bundle = load_document_bundle(str(base_dir), doc_id)
+        
+        # แปลงเป็น Chunks
+        text_chunks = text_items_to_chunks(bundle)
+        table_chunks = table_items_to_chunks(bundle)
+        image_chunks = image_items_to_chunks(bundle)
+        
+        all_chunks = text_chunks + table_chunks + image_chunks
+        
+        # บันทึกลง ChromaDB
+        if all_chunks:
+            index_chunks(all_chunks)
+            print(f"[run_ingestion] Indexed {len(all_chunks)} chunks for {doc_id}.")
+        else:
+            print(f"[WARN] No chunks found for {doc_id}.")
+            
+    except Exception as e:
+        print(f"[ERROR] Indexing Failed: {e}")
+        raise e
 
 
 # -------------------------------------------------------------------
-# CONFIG & Helpers (ของเดิม - ปรับให้รองรับ path ถ้าจำเป็น)
+# Helper สำหรับ Manual Run (คงเดิม)
 # -------------------------------------------------------------------
-DOCS: list[tuple[str, str]] = []
-
 def discover_docs_from_ingested(root: str = "ingested") -> list[tuple[str, str]]:
     base = Path(root)
     if not base.exists():
-        print(f"[WARN] โฟลเดอร์ '{root}' ยังไม่มี")
         return []
-
-    docs: list[tuple[str, str]] = []
+    docs = []
     for child in base.iterdir():
         if child.is_dir():
-            doc_id = child.name
-            docs.append((doc_id, str(child)))
+            docs.append((child.name, str(child)))
     return docs
 
-def get_docs_to_ingest() -> list[tuple[str, str]]:
-    if DOCS: return DOCS
-    # ถ้าจะเทส manual ให้แก้ path ตรงนี้ด้วยถ้าต้องการ
-    return discover_docs_from_ingested("ingested")
-
-def check_ingested_folder(base_dir: str, doc_id: str) -> bool:
-    base_path = Path(base_dir)
-    if not (base_path / "metadata.json").exists(): return False
-    return True 
-
-# -------------------------------------------------------------------
-# main (สำหรับรัน manual)
-# -------------------------------------------------------------------
-def main():
-    docs_to_ingest = get_docs_to_ingest()
-    if not docs_to_ingest:
-        print("=== Ingestion: ไม่มีเอกสารให้ ingest ===")
-        return
-
-    all_chunks = []
-    print("=== Ingestion: start ===")
-    
-    for doc_id, base_dir in docs_to_ingest:
-        print(f"\n[DOC] {doc_id} from {base_dir}")
-        if not check_ingested_folder(base_dir, doc_id): continue
-
-        try:
-            bundle = load_document_bundle(base_dir, doc_id)
-        except Exception as e:
-            print(f"[ERROR] skip {doc_id}: {e}")
-            continue
-
-        t = text_items_to_chunks(bundle)
-        tb = table_items_to_chunks(bundle)
-        im = image_items_to_chunks(bundle)
-        
-        doc_chunks = t + tb + im
-        print(f"  total chunks: {len(doc_chunks)}")
-        
-        if doc_chunks:
-            all_chunks.extend(doc_chunks)
-
-    if all_chunks:
-        index_chunks(all_chunks)
-        print("\nIndexed all chunks into Chroma.")
-    else:
-        print("\n[SUMMARY] No chunks to index.")
-
 if __name__ == "__main__":
-    main()
+    # Manual Test Block
+    print(f"Running ingest_doc.py manually. Root: {root_dir}")
+    pass

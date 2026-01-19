@@ -15,8 +15,8 @@ from ingestion.docling_parser import DoclingParser
 from ingestion.document_classifier import classify_document
 from ingestion.validator import validate_all
 from ingestion.semantic_enricher import tag_sections, categorize_text_blocks, normalize_tables
-# Import Image Extractor helpers
-from ingestion.image_extractor import _get_gemini_vision_model, generate_image_description_md
+# [FIX] Import ชื่อฟังก์ชันให้ถูกต้อง (เปลี่ยนจาก _get_gemini_vision_model เป็น _get_gemini_vision_client)
+from ingestion.image_extractor import _get_gemini_vision_client, generate_image_description_md
 
 
 def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[ImageBlock]:
@@ -262,7 +262,8 @@ def run_ingestion_pipeline(
         doc_id = pdf_path.stem
 
     # Init Vision Model
-    vision_model = _get_gemini_vision_model()
+    # [FIX] เรียกใช้ฟังก์ชันชื่อที่ถูกต้อง
+    vision_model = _get_gemini_vision_client()
     
     # 1. USE DOCLING
     print(f"==== [1/3] Ingestion (Docling) ====")
