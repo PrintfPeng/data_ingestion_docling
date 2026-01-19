@@ -29,7 +29,7 @@ from ingestion.semantic_enricher import (
 def run_semantic_enrich(
     doc_id: str,
     output_root: str | Path = "ingested",
-    use_gemini: bool = False,
+    use_llm: bool = False,
 ) -> None:
     output_root = Path(output_root)
     doc_dir = output_root / doc_id
@@ -62,8 +62,8 @@ def run_semantic_enrich(
     )
 
     # 1) tag sections in text
-    print(f"[run_semantic_enrich] Tagging sections (use_gemini={use_gemini}) ...")
-    doc = tag_sections(doc, use_gemini=use_gemini)
+    print(f"[run_semantic_enrich] Tagging sections (use_llm ={use_llm }) ...")
+    doc = tag_sections(doc, use_llm =use_llm )
 
     # 2) normalize tables
     print("[run_semantic_enrich] Normalizing tables ...")
@@ -129,7 +129,7 @@ def main() -> None:
     run_semantic_enrich(
         doc_id=args.doc_id,
         output_root=args.output_root,
-        use_gemini=args.use_gemini,
+        use_llm =args.use_llm ,
     )
 
 

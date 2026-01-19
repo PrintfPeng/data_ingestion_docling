@@ -101,7 +101,7 @@ def run_ingestion_pipeline(
 
     # 3) classify doc_type (ถ้ายัง generic)
     if doc_type == "generic" or not doc.metadata.doc_type:
-        detected_type = classify_document(doc, use_gemini=False)
+        detected_type = classify_document(doc, use_llm=False)
         print(f"[INGEST] Detected doc_type: {detected_type}")
         doc.metadata.doc_type = detected_type
     else:

@@ -7,51 +7,67 @@ image_extractor.py
 - เปิดไฟล์ PDF
 - ดึงรูปภาพทุกภาพในเอกสาร
 - บันทึกลงโฟลเดอร์ (เช่น ingested/{doc_id}/images/img_001_001.png)
-- [NEW] ใช้ Gemini Vision (Flash) อ่านภาพและสร้าง Caption
+- [NEW] ใช้ Custom Vision Model (Qwen-VL) อ่านภาพและสร้าง Caption
 - แปลงผลลัพธ์เป็น list[ImageBlock] ตาม schema
 """
 
 import time
+import base64
 from pathlib import Path
 from typing import List, Optional
 
 import fitz  # PyMuPDF
-import google.generativeai as genai
+# [CHANGE] ใช้ OpenAI Client สำหรับ Custom API
+from openai import OpenAI
 from PIL import Image
 
 from .schema import ImageBlock
-from .config import GOOGLE_API_KEY  # ดึง Key จาก config กลาง
+
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
+# [CHANGE] เลือกโมเดลที่เหมาะสมที่สุดสำหรับงาน Vision จากลิสต์
+# qwen2.5-vl-32b-instruct เป็นโมเดล Vision-Language ที่เก่งมาก
+VISION_MODEL_NAME = "qwen/qwen2.5-vl-32b-instruct"
+
 # -------------------------------------------------------------------
-# Helper: Gemini Vision
+# Helper: Vision API
 # -------------------------------------------------------------------
 
-def _get_gemini_vision_model():
-    """เตรียม Gemini 2.0 Flash สำหรับงาน Vision"""
-    if not GOOGLE_API_KEY:
-        print("[image_extractor] Warning: No GOOGLE_API_KEY. Image captioning will be skipped.")
-        return None
+def _get_vision_client() -> tuple[Optional[OpenAI], Optional[str]]:
+    """เตรียม OpenAI Client สำหรับงาน Vision"""
+    api_key = os.getenv("CUSTOM_API_KEY")
+    base_url = os.getenv("CUSTOM_API_BASE")
+
+    if not api_key:
+        print("[image_extractor] Warning: No CUSTOM_API_KEY. Image captioning will be skipped.")
+        return None, None
 
     try:
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        # ใช้ Flash เพราะเร็วและถูก เหมาะกับงาน Caption จำนวนมาก
-        return genai.GenerativeModel("gemini-2.5-flash")
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
+        return client, VISION_MODEL_NAME
     except Exception as e:
-        print(f"[image_extractor] Failed to init Gemini: {e}")
-        return None
+        print(f"[image_extractor] Failed to init OpenAI Client: {e}")
+        return None, None
 
-def _generate_image_caption(model, image_path: Path) -> str:
+def _encode_image(image_path: Path) -> str:
+    """แปลงไฟล์รูปเป็น Base64"""
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+def _generate_image_caption(client: OpenAI, model_name: str, image_path: Path) -> str:
     """ส่งรูปไปให้ AI อธิบาย (Captioning)"""
-    if not model:
+    if not client:
         return ""
 
     try:
-        # เปิดรูปด้วย PIL
-        img = Image.open(image_path)
+        # Encode รูปเป็น Base64
+        base64_image = _encode_image(image_path)
         
         prompt = (
             "อธิบายรูปภาพนี้โดยละเอียด: "
@@ -61,8 +77,26 @@ def _generate_image_caption(model, image_path: Path) -> str:
             "ตอบเป็นภาษาไทย กระชับและได้ใจความ"
         )
 
-        response = model.generate_content([prompt, img])
-        return response.text.strip()
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=300,
+        )
+        
+        return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"[image_extractor] Caption generation failed for {image_path.name}: {e}")
         return ""
@@ -88,7 +122,7 @@ def extract_images(
     image_dir.mkdir(parents=True, exist_ok=True)
 
     # Init AI Model
-    vision_model = _get_gemini_vision_model()
+    client, model_name = _get_vision_client()
 
     pdf_doc = fitz.open(path)
     image_blocks: List[ImageBlock] = []
@@ -130,10 +164,10 @@ def extract_images(
                 
                 # [NEW] AI Captioning
                 caption_text = ""
-                if vision_model:
-                    print(f"[image_extractor] Generating caption for {filename}...")
-                    caption_text = _generate_image_caption(vision_model, file_path_on_disk)
-                    # ใส่ delay นิดหน่อยกัน Rate Limit (ถ้าใช้ Free Tier)
+                if client:
+                    print(f"[image_extractor] Generating caption for {filename} using {model_name}...")
+                    caption_text = _generate_image_caption(client, model_name, file_path_on_disk)
+                    # ใส่ delay นิดหน่อยกัน Rate Limit (ถ้าจำเป็น)
                     time.sleep(1.0) 
 
                 image_block = ImageBlock(

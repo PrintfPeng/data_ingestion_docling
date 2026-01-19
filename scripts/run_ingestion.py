@@ -114,7 +114,7 @@ def run_ingestion_pipeline(
 
     # 3) Classify Type
     try:
-        predicted_type = classify_document(doc, use_gemini=True)
+        predicted_type = classify_document(doc, use_llm=True)
         print(f"[run_ingestion] Predicted document type: {predicted_type}")
         doc.metadata.doc_type = predicted_type
     except Exception as e:

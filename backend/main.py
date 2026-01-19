@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from pathlib import Path
 import shutil
 import subprocess
@@ -47,16 +47,21 @@ def _normalize_id(raw_id: str) -> str:
     ทำให้ ID เป็นมาตรฐานเดียวกันทั้งระบบ (Backend/Frontend/DB)
     - เปลี่ยนเป็นตัวพิมพ์เล็ก
     - แทนที่ช่องว่างด้วย _
-    - ลบอักขระพิเศษ
+    - ลบอักขระพิเศษ (เก็บ a-z, 0-9, _, - และภาษาไทยไว้)
     """
     if not raw_id:
         return "unknown_doc"
+    
     # 1. Lowercase & Strip
     s = raw_id.strip().lower()
+    
     # 2. Replace spaces with underscores
     s = re.sub(r"\s+", "_", s)
-    # 3. Remove weird chars (keep alphanumeric, underscore, hyphen)
-    s = re.sub(r"[^a-z0-9_\-]", "", s)
+    
+    # 3. Remove weird chars
+    # [CHANGE] แก้บรรทัดนี้: เพิ่ม \u0E00-\u0E7F เพื่อรองรับภาษาไทย
+    s = re.sub(r"[^a-z0-9_\-\u0E00-\u0E7F]", "", s)
+    
     return s
 
 
@@ -89,6 +94,8 @@ class AskResponse(BaseModel):
     sources: List[dict]
     intent: str
     mode: str
+    # [FIX] เพิ่ม field tables เพื่อรองรับ Frontend schema (แม้เราจะ render html ใน text ก็ตาม)
+    tables: List[Dict[str, Any]] = []
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -108,6 +115,54 @@ async def ask(req: AskRequest):
         mode=req.mode,
     )
 
+    # =================================================================
+    # [FIX] Post-Processing: แปลง Tag [SHOW_TABLE] เป็น HTML
+    # =================================================================
+    answer_text = result.get("answer", "")
+    sources = result.get("sources", [])
+    
+    # หา Tag ทั้งหมด เช่น [SHOW_TABLE:CAT=สว.]
+    table_tags = re.findall(r"\[SHOW_TABLE:CAT=(.*?)\]", answer_text)
+
+    for category_key in table_tags:
+        clean_cat = category_key.strip()
+        found_html = ""
+
+        # วนหา HTML Content จาก Sources ที่ RAG คืนมา
+        for src in sources:
+            # ตรวจสอบว่าเป็น Table Source หรือไม่
+            # (ต้องดู structure ของ src ว่าเก็บ html_content ไว้ตรงไหน โดยปกติจะอยู่ใน metadata หรือ root keys)
+            # กรณีนี้เราจะพยายามหาจากหลายๆ ที่เพื่อความชัวร์
+            metadata = src.get("metadata", src) # Fallback to src itself if metadata key missing
+            
+            is_table = src.get("source") == "table" or metadata.get("source") == "table"
+            
+            if is_table:
+                # ดึง Category และ HTML
+                src_cat = metadata.get("category", "")
+                src_html = metadata.get("html_content") or metadata.get("extra", {}).get("html_content")
+
+                # Match Category (ถ้า Tag ไม่ระบุ Category ให้ถือว่าเอาตารางแรกที่เจอ)
+                if (src_cat == clean_cat) or (clean_cat == ""):
+                    if src_html:
+                        found_html = src_html
+                        break
+        
+        # แทนที่ Tag ในคำตอบ
+        tag_str = f"[SHOW_TABLE:CAT={category_key}]"
+        if found_html:
+            #
+            # แทรก HTML ลงไปใน text (Frontend จะ render ให้เองเพราะมี DOMPurify)
+            replacement = f"<br><div class='table-responsive'>{found_html}</div><br>"
+            answer_text = answer_text.replace(tag_str, replacement)
+        else:
+            # ถ้าหาตารางไม่เจอ ให้ลบ Tag ออกเพื่อความสะอาด
+            answer_text = answer_text.replace(tag_str, "")
+
+    # อัปเดตคำตอบกลับเข้าไปใน result
+    result["answer"] = answer_text
+    # =================================================================
+
     # 2) เขียน log ลงไฟล์ (กันไม่ให้ทำ API พังถ้า log มีปัญหา)
     try:
         append_log(
@@ -126,6 +181,9 @@ async def ask(req: AskRequest):
         print(f"[LOG_ERROR] {e!r}")
 
     # 3) คืนค่าเป็น AskResponse (ตอบตรงตาม schema)
+    # ใส่ tables=[] เพื่อกัน error validation (เพราะ model เราเพิ่ม field นี้)
+    result["tables"] = result.get("tables", [])
+    
     return AskResponse(**result)
 
 
@@ -302,4 +360,4 @@ def list_documents():
 @app.get("/")
 def root():
     # redirect ไปหน้า frontend หลัก
-    return RedirectResponse(url="/app/")
+    return RedirectResponse(url="/app/index.html")

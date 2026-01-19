@@ -5,19 +5,18 @@ from typing import List, Optional, Dict, Tuple
 import logging
 import warnings
 import re
+import gc  # [FIX 1] เพิ่ม import gc เพื่อจัดการ Memory/File Lock
 
 from fastapi import HTTPException
 from langchain_community.vectorstores import Chroma
-from langchain_google_genai._common import GoogleGenerativeAIError
+# [CHANGE] ลบ Google specific error import ออก
+# from langchain_google_genai._common import GoogleGenerativeAIError
 from langchain_core.documents import Document
 
 from .chunking import Chunk
 from .embeddings import get_embedding_client
 
 
-# from backend.services.vector_store import get_collection_info
-# info = get_collection_info()
-# print(info)
 # -----------------------------------------------------------
 # Setup
 # -----------------------------------------------------------
@@ -45,19 +44,18 @@ _vectordb_cache: Dict[Tuple[str, str], Chroma] = {}
 # -----------------------------------------------------------
 def sanitize_doc_id(doc_id: str) -> str:
     """
-    Sanitize document ID ให้ตรงกับรูปแบบที่เก็บใน DB
-    - Lowercase
-    - Replace spaces with underscores
-    - Remove special characters except underscore
-    
-    Example: "Sample QNA" -> "sample_qna"
+    Sanitize document ID to match backend storage format.
     """
     if not doc_id:
         return ""
-    
-    doc_id = str(doc_id).lower().strip()
+    # Lowercase
+    doc_id = doc_id.lower().strip()
+    # Replace spaces with underscores
     doc_id = re.sub(r'\s+', '_', doc_id)
-    doc_id = re.sub(r'[^a-z0-9_]', '', doc_id)
+    
+    # [CHANGE] แก้บรรทัดนี้: เพิ่ม \u0E00-\u0E7F (ช่วงรหัสภาษาไทย) ลงไปในข้อยกเว้น
+    # จากเดิม: doc_id = re.sub(r'[^a-z0-9_]', '', doc_id)
+    doc_id = re.sub(r'[^a-z0-9_\u0E00-\u0E7F-]', '', doc_id) 
     
     return doc_id
 
@@ -74,14 +72,23 @@ def get_vector_store(
     persist_directory: str = CHROMA_DIR,
     collection_name: str = COLLECTION_NAME,
     force_recreate: bool = False,
+    reload: bool = False, # [FIX] เพิ่มตัวแปรนี้เพื่อรับคำสั่ง Reload
 ) -> Chroma:
     """
-    คืน Chroma vector store ที่ผูกกับ Gemini embeddings
+    คืน Chroma vector store ที่ผูกกับ Embeddings client (ที่แก้เป็น Custom API แล้ว)
     - มี cache ใน process เดียวกันเพื่อไม่ต้องสร้างใหม่ทุกครั้ง
     """
+    should_reload = force_recreate or reload # รวม Flag
+
     persist_path = Path(persist_directory)
     persist_path.mkdir(parents=True, exist_ok=True)
     key = _cache_key(persist_directory, collection_name)
+
+    # [FIX] ถ้าสั่ง Reload ให้ลบ Cache ทิ้งก่อน และสั่ง GC เพื่อปลด File Lock
+    if should_reload and key in _vectordb_cache:
+        logger.info(f"[vector_store] Forcing reload of ChromaDB client for {key}")
+        del _vectordb_cache[key]
+        gc.collect() # [FIX 2] บังคับล้าง Memory ทันที เพื่อแก้ปัญหา File Lock บน Windows
 
     if not force_recreate and key in _vectordb_cache:
         return _vectordb_cache[key]
@@ -99,10 +106,19 @@ def get_vector_store(
             )
     except Exception as e:
         logger.exception("[vector_store] Failed to init Chroma: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="ไม่สามารถเชื่อมต่อ Vector DB ได้ โปรดตรวจสอบการติดตั้ง"
-        ) from e
+        # ลอง GC อีกรอบแล้ว Retry เผื่อจังหวะชนกัน
+        gc.collect()
+        try:
+            vectordb = Chroma(
+                collection_name=collection_name,
+                embedding_function=embeddings,
+                persist_directory=str(persist_path),
+            )
+        except Exception:
+            raise HTTPException(
+                status_code=500,
+                detail="ไม่สามารถเชื่อมต่อ Vector DB ได้ โปรดตรวจสอบการติดตั้ง"
+            ) from e
 
     _vectordb_cache[key] = vectordb
     return vectordb
@@ -122,12 +138,8 @@ def _normalize_metadata(md: dict) -> dict:
     return simple
 
 
-def _raise_embedding_http_error(e: GoogleGenerativeAIError) -> None:
-    logger.error("Embedding error: %s", e)
-    raise HTTPException(
-        status_code=500,
-        detail="Google Embedding Error: โปรดตรวจสอบ API Key ของคุณ",
-    ) from e
+# [CHANGE] ลบฟังก์ชัน _raise_embedding_http_error ของ Google ออก
+# เพราะเราจะใช้ General Exception handling แทน
 
 
 # -----------------------------------------------------------
@@ -171,8 +183,7 @@ def index_chunks(
             vectordb.persist()
         except Exception: 
             pass
-    except GoogleGenerativeAIError as e:
-        _raise_embedding_http_error(e)
+    # [CHANGE] ลบการดักจับ GoogleGenerativeAIError ออก เพื่อให้รองรับ error ทั่วไปหรือ OpenAI error
     except Exception as e:
         logger.exception("[vector_store] Indexing error: %s", e)
         raise HTTPException(status_code=500, detail=f"Indexing error: {e}") from e
@@ -244,11 +255,6 @@ def search_similar(
 ) -> List[Document]:
     """
     [COMPLETELY REWRITTEN] ระบบค้นหาแบบ Robust with Smart Fallback
-    
-    Strategy:
-    1. Try Native Chroma Filter (Fast)
-    2. If fails -> Python-side Filter (Safe)
-    3. Log everything for debugging
     """
     if not query or not query.strip():
         raise HTTPException(status_code=400, detail="Empty query")
@@ -320,37 +326,41 @@ def search_similar(
         
         logger.info(f"[vector_store] Search query='{query[:50]}...' returned {len(results)} results")
         
-        # [DEBUG] แสดง doc_ids ของผลลัพธ์
-        if results:
-            result_doc_ids = [d.metadata.get("doc_id") for d in results if d.metadata]
-            logger.info(f"[vector_store] Result doc_ids: {result_doc_ids}")
-        else:
-            logger.warning(f"[vector_store] ⚠️ No results found! This might indicate a problem.")
-        
         return results
 
-    except ChromaInternalError:
-        logger.warning("[vector_store] Chroma InternalError. Retrying...")
-        key = _cache_key(persist_directory, collection_name)
-        _vectordb_cache.pop(key, None)
-        vectordb = get_vector_store(persist_directory, collection_name, force_recreate=True)
-        
-        # Retry with Python Filter only (safest)
-        raw_docs = vectordb.similarity_search(query, k=k*10)
-        results = _python_filter_documents(raw_docs, doc_ids, sources, doc_types)[:k]
-        return results
-        
     except Exception as e:
-        logger.exception("[vector_store] Search failed: %s", e)
+        # [CRITICAL FIX] ดักจับ Error Database พัง แล้วสั่ง Reload ทันที (Auto-healing)
+        error_msg = str(e)
+        logger.warning(f"[vector_store] Search Exception: {error_msg}")
+
+        is_db_corruption = (
+            "Nothing found on disk" in error_msg 
+            or "InternalError" in error_msg 
+            or "segment reader" in error_msg
+            or "sqlite" in error_msg.lower()
+            or "Error finding id" in error_msg # [FIX 3] ดัก Error finding id
+        )
+
+        if is_db_corruption or isinstance(e, ChromaInternalError):
+            logger.warning("[vector_store] 🚨 DB Corruption/Change detected. Reloading Vector Store...")
+            
+            # 1. Force Reload (ลบ Cache และสร้างใหม่)
+            vectordb = get_vector_store(persist_directory, collection_name, reload=True)
+            
+            # 2. Retry Search with the NEW vectordb instance
+            try:
+                # ใช้ Python Filter เพื่อความชัวร์สูงสุด
+                raw_docs = vectordb.similarity_search(query, k=k*10)
+                results = _python_filter_documents(raw_docs, doc_ids, sources, doc_types)[:k]
+                logger.info(f"[vector_store] Retry success. Found {len(results)} results.")
+                return results
+            except Exception as final_e:
+                logger.error(f"[vector_store] Retry failed: {final_e}")
+                # return empty list instead of crashing
+                return []
         
-        # Ultimate Fallback
-        try:
-            logger.warning("[vector_store] Exception occurred, using ultimate fallback (Python filter)")
-            raw_docs = vectordb.similarity_search(query, k=k*10)
-            return _python_filter_documents(raw_docs, doc_ids, sources, doc_types)[:k]
-        except Exception as final_error:
-            logger.exception("[vector_store] Ultimate fallback also failed: %s", final_error)
-            raise HTTPException(status_code=500, detail="Vector search completely failed") from final_error
+        # ถ้าไม่ใช่ DB error ให้ raise ตามปกติ
+        raise e
 
 
 # -----------------------------------------------------------
@@ -364,12 +374,11 @@ def get_collection_info(
     [NEW] Debug function: แสดงข้อมูลใน Collection
     """
     try:
-        vectordb = get_vector_store(persist_directory, collection_name)
+        # ใช้ reload=True เพื่อให้เห็นข้อมูลล่าสุดเสมอ
+        vectordb = get_vector_store(persist_directory, collection_name, reload=True)
         
-        # Get sample documents
         sample_docs = vectordb.similarity_search("test", k=5)
         
-        # Extract unique doc_ids
         doc_ids = set()
         sources = set()
         doc_types = set()

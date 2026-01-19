@@ -7,13 +7,13 @@ document_classifier.py
 - จำแนกประเภทเอกสารจากข้อความ text blocks และชื่อไฟล์
 - รองรับ 2 โหมด:
     1) Rule-based (ไม่ใช้โมเดล)
-    2) Gemini LLM-based (ใช้โมเดล gemini-2.5 / 2.0)
+    2) LLM-based (ใช้โมเดล Qwen/OpenAI Compatible)
 
 ขั้นตอน:
 - อ่าน TextBlock
 - รวมข้อความบางส่วน (sample_text)
 - Rule-based → ถ้าดูไม่ออก
-- ถ้า use_gemini=True → ใช้ LLM ช่วย classify
+- ถ้า use_llm=True → ใช้ LLM ช่วย classify
 """
 
 from typing import List, Optional
@@ -39,14 +39,10 @@ CANDIDATE_TYPES = [
 ]
 
 # -------------------------
-# Gemini Model Candidates
+# [CHANGE] LLM Model Config
 # -------------------------
-# เราจะพยายามใช้ PRO ก่อน ถ้าไม่ได้ค่อย fallback เป็น flash
-PRIMARY_MODEL = "models/gemini-2.5-flash"
-MODEL_CANDIDATES = [
-    PRIMARY_MODEL,
-    "models/gemini-2.5-flash",
-]
+# ใช้โมเดล Qwen ตามที่ต้องการ
+PRIMARY_MODEL = os.getenv("CUSTOM_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
 
 # -------------------------
 # HELPER FUNCTION
@@ -67,16 +63,20 @@ def _collect_sample_text(texts: List[TextBlock], max_chars: int = 4000) -> str:
     return "\n".join(chunks)
 
 
-def _get_gemini_api_key() -> Optional[str]:
+def _get_custom_api_config() -> tuple[Optional[str], Optional[str]]:
     """
-    ดึง API KEY แบบยืดหยุ่น:
-    - ลอง GEMINI_API_KEY ก่อน
-    - ถ้าไม่มี ใช้ GOOGLE_API_KEY แทน (ส่วนใหญ่จะเป็น key เดียวกัน)
+    [CHANGE] ดึง API KEY และ BASE URL สำหรับ Custom API
     """
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    prefix = (api_key or "None")[:10]
-    print(f"[document_classifier] GEMINI/GOOGLE key prefix: {prefix}")
-    return api_key
+    api_key = os.getenv("CUSTOM_API_KEY")
+    api_base = os.getenv("CUSTOM_API_BASE")
+    
+    if api_key:
+        prefix = api_key[:5] + "..."
+        print(f"[document_classifier] Custom API Key prefix: {prefix}")
+    else:
+        print("[document_classifier] Custom API Key NOT found")
+        
+    return api_key, api_base
 
 
 # ============================================================
@@ -184,42 +184,42 @@ def classify_document_rule_based(doc: IngestedDocument) -> str:
 
 
 # ============================================================
-# 2) GEMINI-BASED CLASSIFIER
+# 2) LLM-BASED CLASSIFIER (Custom API)
 # ============================================================
 
 
-def classify_document_with_gemini(
+def classify_document_with_llm(
     doc: IngestedDocument,
     model_name: Optional[str] = None,
 ) -> str:
     """
-    ใช้ Gemini จำแนกประเภทเอกสาร
+    [CHANGE] ใช้ Custom LLM (Qwen) จำแนกประเภทเอกสาร
     - ใช้โมเดล fix (PRIMARY_MODEL) ถ้าไม่กำหนด
     - ถ้า error / ไม่มี KEY → fallback rule-based
     """
     try:
-        import google.generativeai as genai
-    except Exception as e:
-        print(f"[document_classifier] google.generativeai import failed: {e}")
+        from openai import OpenAI
+    except ImportError:
+        print("[document_classifier] openai library not installed -> fallback rule-based")
         return classify_document_rule_based(doc)
 
-    api_key = _get_gemini_api_key()
-    if not api_key:
-        print("[document_classifier] No API KEY → fallback rule-based")
+    api_key, api_base = _get_custom_api_config()
+    if not api_key or not api_base:
+        print("[document_classifier] No Custom API Config → fallback rule-based")
         return classify_document_rule_based(doc)
 
     try:
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        client = OpenAI(
+            api_key=api_key,
+            base_url=api_base
+        )
     except Exception as e:
-        print(f"[document_classifier] genai.configure failed: {e}")
+        print(f"[document_classifier] OpenAI Client init failed: {e}")
         return classify_document_rule_based(doc)
 
     # เลือก model
     if model_name is None:
         model_name = PRIMARY_MODEL
-
-    # ถ้าส่งชื่อมาแปลก ๆ ให้ยังมี candidate list ช่วยสำรอง
-    candidates = [model_name] + [m for m in MODEL_CANDIDATES if m != model_name]
 
     # เตรียมข้อความ
     sample_text = _collect_sample_text(doc.texts, max_chars=4000)
@@ -254,53 +254,55 @@ qna
 generic
 """
 
-    last_error = None
+    try:
+        print(f"[document_classifier] Using Custom model: {model_name}")
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a helpful document classifier."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0,
+            max_tokens=50
+        )
+        
+        answer = response.choices[0].message.content or ""
+        answer = answer.strip().lower()
+        print("[document_classifier] LLM raw answer:", answer)
 
-    for m in candidates:
-        try:
-            print(f"[document_classifier] Using Gemini model: {m}")
-            model = genai.GenerativeModel(m)
-            resp = model.generate_content(prompt)
-            answer = (getattr(resp, "text", "") or "").strip().lower()
-            print("[document_classifier] Gemini raw answer:", answer)
+        # normalize
+        answer = answer.replace("label:", "").strip()
+        answer = answer.splitlines()[0].strip() if answer else ""
 
-            # normalize
-            answer = answer.replace("label:", "").strip()
-            answer = answer.splitlines()[0].strip() if answer else ""
+        # mappingแบบหยาบกันหลุด
+        if "bank" in answer and "statement" in answer:
+            return "bank_statement"
+        if "invoice" in answer:
+            return "invoice"
+        if "receipt" in answer:
+            return "receipt"
+        if "purchase" in answer:
+            return "purchase_order"
+        if "delivery" in answer:
+            return "delivery_note"
+        if "tax" in answer:
+            return "tax_form"
+        if "qna" in answer or "q&a" in answer or "qa" in answer or "question" in answer:
+            return "qna"
 
-            # mappingแบบหยาบกันหลุด
-            if "bank" in answer and "statement" in answer:
-                return "bank_statement"
-            if "invoice" in answer:
-                return "invoice"
-            if "receipt" in answer:
-                return "receipt"
-            if "purchase" in answer:
-                return "purchase_order"
-            if "delivery" in answer:
-                return "delivery_note"
-            if "tax" in answer:
-                return "tax_form"
-            if "qna" in answer or "q&a" in answer or "qa" in answer or "question" in answer:
-                return "qna"
+        # ถ้าโมเดลตอบมาหนึ่งใน label อยู่แล้วก็ใช้เลย
+        for lbl in CANDIDATE_TYPES:
+            if lbl in answer:
+                return lbl
 
-            # ถ้าโมเดลตอบมาหนึ่งใน label อยู่แล้วก็ใช้เลย
-            for lbl in CANDIDATE_TYPES:
-                if lbl in answer:
-                    return lbl
+        # ไม่เข้าอะไรเลย → generic
+        return "generic"
 
-            # ไม่เข้าอะไรเลย → generic
-            return "generic"
-
-        except Exception as e:
-            last_error = e
-            print(f"[document_classifier] Gemini classify failed with model='{m}': {e}")
-            # ลองตัวถัดไปใน candidates
-
-    print("[document_classifier] All Gemini attempts failed, fallback to rule-based.")
-    if last_error:
-        print(f"[document_classifier] Last error: {last_error}")
-    return classify_document_rule_based(doc)
+    except Exception as e:
+        print(f"[document_classifier] LLM classify failed: {e}")
+        # Fallback to rule-based
+        return classify_document_rule_based(doc)
 
 
 # ============================================================
@@ -308,19 +310,19 @@ generic
 # ============================================================
 
 
-def classify_document(doc: IngestedDocument, use_gemini: bool = True) -> str:
+def classify_document(doc: IngestedDocument, use_llm: bool = True) -> str:
     """
-    เลือกว่าจะใช้ rule-based หรือ Gemini
+    เลือกว่าจะใช้ rule-based หรือ LLM
     """
     # กันกรณีไม่มี text เลย ยังให้ได้ type กลับไป (มักจะ generic)
     if not doc.texts:
         return classify_document_rule_based(doc)
 
-    if not use_gemini:
+    if not use_llm:
         return classify_document_rule_based(doc)
 
-    # พยายามใช้ Gemini ก่อน
-    return classify_document_with_gemini(doc)
+    # พยายามใช้ LLM ก่อน
+    return classify_document_with_llm(doc)
 
 
 # ============================================================
@@ -349,5 +351,5 @@ if __name__ == "__main__":
             images=[],
         )
 
-        print("Rule-based:", classify_document(doc, use_gemini=False))
-        print("Gemini:", classify_document(doc, use_gemini=True))
+        print("Rule-based:", classify_document(doc, use_llm=False))
+        print("LLM-based:", classify_document(doc, use_llm=True))

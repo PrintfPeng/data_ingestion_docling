@@ -7,8 +7,12 @@ env_path = Path(__file__).resolve().parent.parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
-# --- Google Gemini ---
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# --- Custom API (OpenAI Compatible) ---
+
+CUSTOM_API_KEY = os.getenv("CUSTOM_API_KEY")
+CUSTOM_API_BASE = os.getenv("CUSTOM_API_BASE")
+# ตั้งค่าโมเดลเริ่มต้นเป็น qwen/qwen-2.5-72b-instruct
+CUSTOM_MODEL_NAME = os.getenv("CUSTOM_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
 
 # --- OCR API Configuration ---
 # URL จาก Swagger

@@ -11,13 +11,13 @@ from difflib import SequenceMatcher
 
 from dotenv import load_dotenv
 
-# LangChain / Gemini chat wrapper used in project
+# [CHANGE] เปลี่ยน Import เป็น ChatOpenAI สำหรับ Custom API
 try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage, SystemMessage
     _HAS_GENAI = True
 except Exception:
-    ChatGoogleGenerativeAI = None  # type: ignore
+    ChatOpenAI = None  # type: ignore
     HumanMessage = None  # type: ignore
     SystemMessage = None  # type: ignore
     _HAS_GENAI = False
@@ -46,11 +46,16 @@ _QNA_CACHE_MAX_SIZE = 100
 
 # load .env to make sure key available
 load_dotenv(override=True)
-_GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# LLM defaults
-_LL_MODEL_FAST = "gemini-2.5-flash" 
-_LL_MODEL_SMALL = "gemini-2.5-flash-lite"
+
+_CUSTOM_API_KEY = os.getenv("CUSTOM_API_KEY")
+_CUSTOM_API_BASE = os.getenv("CUSTOM_API_BASE")
+
+# [CHANGE] กำหนด Model เป็น Qwen ตามที่ต้องการ
+_LL_MODEL_FAST = os.getenv("CUSTOM_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
+# ใช้โมเดลเดียวกันเป็น Fallback หรือจะเปลี่ยนเป็นตัวเล็กกว่าถ้ามี
+_LL_MODEL_SMALL = _LL_MODEL_FAST 
+
 _DEFAULT_TEMPERATURE = 0.1 # ลด Temperature ลงเพื่อลดการมั่ว
 
 # Re-ranking config
@@ -98,8 +103,11 @@ def sanitize_doc_id(doc_id: str) -> str:
     doc_id = doc_id.lower().strip()
     # Replace spaces with underscores
     doc_id = re.sub(r'\s+', '_', doc_id)
-    # Remove special characters (keep only alphanumeric and underscore)
-    doc_id = re.sub(r'[^a-z0-9_]', '', doc_id)
+    
+    # [CHANGE] แก้บรรทัดนี้: เพิ่ม \u0E00-\u0E7F (ช่วงรหัสภาษาไทย) ลงไปในข้อยกเว้น
+    # จากเดิม: doc_id = re.sub(r'[^a-z0-9_]', '', doc_id)
+    doc_id = re.sub(r'[^a-z0-9_\u0E00-\u0E7F-]', '', doc_id) 
+    
     return doc_id
 
 
@@ -115,25 +123,31 @@ def _sanitize_html_content(html: str) -> str:
 
 
 # -------------------------------------------------------------------
-# Helper: LLM (Gemini) safe getter
+# Helper: LLM (Custom/OpenAI Compatible) safe getter
 # -------------------------------------------------------------------
 def _get_llm_instance(model: Optional[str] = None, temperature: float = _DEFAULT_TEMPERATURE):
     if not _HAS_GENAI:
-        logger.debug("[rag] langchain_google_genai not installed -> no LLM available")
+        logger.debug("[rag] langchain_openai not installed -> no LLM available")
         return None
-    api_key = os.getenv("GOOGLE_API_KEY") or _GOOGLE_API_KEY
+    
+    # [CHANGE] รับค่า Key และ Base URL จาก Env ใหม่
+    api_key = os.getenv("CUSTOM_API_KEY") or _CUSTOM_API_KEY
+    api_base = os.getenv("CUSTOM_API_BASE") or _CUSTOM_API_BASE
+    
     if not api_key:
-        logger.debug("[rag] GOOGLE_API_KEY not set -> no LLM available")
+        logger.debug("[rag] CUSTOM_API_KEY not set -> no LLM available")
         return None
 
     model = model or _LL_MODEL_FAST
     try:
-        return ChatGoogleGenerativeAI(
+        # [CHANGE] สร้าง ChatOpenAI Instance
+        return ChatOpenAI(
             model=model,
             temperature=temperature,
-            google_api_key=api_key,
+            openai_api_key=api_key,
+            openai_api_base=api_base,
             max_retries=2,
-            request_timeout=30
+            request_timeout=60 # เพิ่ม timeout เผื่อโมเดลใหญ่ตอบช้า
         )
     except Exception as e:
         logger.exception("[rag] Failed to init LLM: %s", e)
@@ -274,7 +288,7 @@ def _generate_fallback_answer(docs, error_msg: str = "") -> str:
     
     joined_snippets = "\n\n".join(snippets)
     header = f"⚠️ **แจ้งเตือน ({error_msg}):** ระบบจึงดึงเนื้อหาที่เกี่ยวข้องจากเอกสารมาแสดงให้โดยตรงครับ:\n\n"
-             
+              
     return header + joined_snippets
 
 
@@ -493,22 +507,25 @@ async def answer_question(
         # Layer 1: Strict Search
         raw_docs = search_similar(query, k=top_k*3, doc_ids=sanitized_doc_ids, sources=sources_filter, doc_types=doc_types)
         
-        # Layer 2: Relaxed ID Search
-        if not raw_docs and sanitized_doc_ids:
-             logger.warning(f"[rag] Layer 1 empty. Retrying Layer 2 (Global search).")
-             raw_docs = search_similar(query, k=top_k*3, doc_ids=None, sources=sources_filter, doc_types=doc_types)
+        # [CHANGE] Disabled Layer 2 & 3 to prevent cross-document contamination
+        # ถ้า Layer 1 (Strict) ไม่เจอ ก็คือไม่เจอเลย (เพื่อให้ระบบตอบว่า "ไม่พบข้อมูล" แทนที่จะมั่ว)
         
-        # Layer 3: Keyword/Broad Search
-        if not raw_docs:
-             logger.warning(f"[rag] Layer 2 empty. Retrying Layer 3 (Broad).")
-             broad_docs = search_similar(query, k=50, doc_ids=None, sources=sources_filter, doc_types=doc_types)
-             
-             q_terms = [t for t in query.lower().split() if len(t) > 2]
-             if q_terms:
-                 raw_docs = [d for d in broad_docs if any(t in (d.page_content or "").lower() for t in q_terms)]
-                 if not raw_docs: raw_docs = broad_docs[:top_k]
-             else:
-                 raw_docs = broad_docs[:top_k]
+        # Layer 2: Relaxed ID Search (DISABLED)
+        # if not raw_docs and sanitized_doc_ids:
+        #      logger.warning(f"[rag] Layer 1 empty. Retrying Layer 2 (Global search).")
+        #      raw_docs = search_similar(query, k=top_k*3, doc_ids=None, sources=sources_filter, doc_types=doc_types)
+        
+        # Layer 3: Keyword/Broad Search (DISABLED)
+        # if not raw_docs:
+        #      logger.warning(f"[rag] Layer 2 empty. Retrying Layer 3 (Broad).")
+        #      broad_docs = search_similar(query, k=50, doc_ids=None, sources=sources_filter, doc_types=doc_types)
+        #      
+        #      q_terms = [t for t in query.lower().split() if len(t) > 2]
+        #      if q_terms:
+        #          raw_docs = [d for d in broad_docs if any(t in (d.page_content or "").lower() for t in q_terms)]
+        #          if not raw_docs: raw_docs = broad_docs[:top_k]
+        #      else:
+        #          raw_docs = broad_docs[:top_k]
 
         logger.info(f"[rag] Found {len(raw_docs)} raw docs")
 
@@ -542,29 +559,51 @@ async def answer_question(
         logger.error(f"[rag] Search failed: {e}")
         return {"answer": f"ระบบค้นหาขัดข้อง: {str(e)}", "sources": [], "intent": intent, "mode": mode}
 
-    # --- Prepare Context & Table Map ---
+# --- Prepare Context & Table Map (FIXED) ---
     table_map = {}
     table_cat_map = {}
+    context_parts = [] # เก็บเนื้อหาทีละส่วนเพื่อรวมเป็น Context ใหญ่
     table_counter = 0 
     
+    # [NEW] เก็บรายการ ID ของตารางที่เจอใน Search Result เอาไว้ใช้กรณี AI ไม่ยอมตอบ (Fail-safe)
+    found_table_ids = []
+    
     try:
-        context_text = _build_context_text(docs)
-        
+        context_parts.append("⚠️ **แหล่งข้อมูลอ้างอิง:** (เรียงตามความเกี่ยวข้อง)\n")
+
         for i, d in enumerate(docs, 1):
             md = d.metadata or {}
+            doc_id = md.get("doc_id", "unknown")
+            page = md.get("page", "?")
             source = str(md.get("source", "text")).lower().strip()
+            # ดึงเนื้อหา (Markdown) มาเตรียมไว้
+            content = getattr(d, "page_content", "") or ""
+            content = content.replace("\x00", "")
             
+            # สร้างส่วนหัวของ Chunk นี้
+            chunk_header = f"[SOURCE {i}] ID: {doc_id} | Page: {page}"
+
             if source == "table":
                 table_counter += 1
-                table_ref_id = str(table_counter)
+                table_ref_id = str(table_counter) # เลขรัน 1, 2, 3...
                 
+                # เก็บ ID จริงไว้ใช้กับ Fail-safe
+                found_table_ids.append(table_ref_id)
+                
+                # 1. ดึง HTML มาเก็บใน Map (สำหรับแสดงผลหน้าเว็บ)
                 raw_html = md.get("html_content", "")
                 safe_html = _sanitize_html_content(raw_html)
                 if not safe_html:
+                    # Fallback ถ้าไม่มี HTML ให้แสดง Markdown ในกล่องแทน
                     safe_html = f"<pre class='text-xs overflow-auto p-2 bg-gray-100'>{md.get('markdown_content', 'No content')}</pre>"
                 
                 table_map[table_ref_id] = safe_html
                 
+                # 2. [CRITICAL FIX] แปะป้ายบอก AI ชัดๆ ว่าตารางนี้คือรหัสอะไร
+                # AI จะได้รู้ว่า Markdown ข้างล่างนี้ คือ TBL_1
+                chunk_header += f" | **TYPE: TABLE (Code: [SHOW_TABLE:TBL_{table_ref_id}])**"
+                
+                # Mapping category/role (เหมือนเดิม)
                 category = md.get("category", "").strip().lower()
                 role = md.get("role", "").strip().lower()
                 
@@ -574,32 +613,53 @@ async def answer_question(
                 if role:
                     role_key = f"role:{role}"
                     if role_key not in table_cat_map: table_cat_map[role_key] = safe_html
+            
+            # เพิ่มเนื้อหาลงใน Context Parts
+            context_parts.append(f"{chunk_header}\n{content[:3500]}")
+
+        # รวมทุกส่วนเป็นข้อความเดียวส่งให้ AI
+        context_text = "\n\n".join(context_parts)
 
     except Exception as e:
         logger.error(f"[rag] Context build failed: {e}")
         return {"answer": "เกิดข้อผิดพลาดในการเตรียมข้อมูล", "sources": [], "intent": intent, "mode": mode}
     
-    system_prompt = (
-        "คุณเป็นผู้ช่วยอัจฉริยะ (Smart Assistant) ที่ตอบคำถามจากเอกสารที่กำหนดให้ (Context) เท่านั้น\n"
-        "คำแนะนำ:\n"
-        "1. **วิเคราะห์คำถาม:** จับประเด็นสำคัญว่าผู้ใช้ต้องการทราบอะไร\n"
-        "2. **ค้นหาข้อมูล:** ดูข้อมูลใน Context ว่ามีส่วนไหนที่ตอบคำถามได้บ้าง\n"
-        "   - ⚠️ **สำคัญ:** แหล่งข้อมูลใน Context เรียงตามลำดับความสำคัญแล้ว ให้ความสำคัญกับลำดับต้นๆ ก่อน\n"
-        "3. **สังเคราะห์คำตอบ:** เรียบเรียงคำตอบให้น่าอ่าน เป็นภาษาไทยที่สละสลวย\n"
-        "4. **การแสดงตาราง (ยืดหยุ่น):**\n"
-        "   - [SHOW_TABLE:TBL_x] สำหรับเรียกตารางด้วยเลข (เช่น TBL_1)\n"
-        "   - [SHOW_TABLE:CAT=หมวดหมู่] สำหรับเรียกตารางด้วยหมวด\n"
-        "5. **[สำคัญ] การใช้ข้อมูลจากตาราง:**\n"
-        "   - หากข้อมูลคำตอบอยู่ในส่วนที่เป็น Table (SOURCE Type: Table) **ต้อง** ดึงข้อมูลนั้นมาตอบ อย่าบอกว่าไม่พบข้อมูล\n"
-        "   - ถ้าตารางมีข้อมูลที่ตอบคำถามได้ ให้ตอบฟันธงไปเลย\n"
-        "\n"
-        "กฎเหล็ก:\n"
-        "- ห้ามตอบนอกเหนือจากข้อมูลที่มีใน Context\n"
-        "- ถ้าไม่พบข้อมูล ให้ตอบว่า 'ไม่พบข้อมูลในเอกสารที่แนบมา'\n"
-        "- ห้ามแต่งเติมข้อมูลเอง (Anti-Hallucination)\n"
-        "\n"
-        f"=== CONTEXT ===\n{context_text}\n==============="
-    )
+    # [NEW] Strict System Prompt for Table Mode
+    if mode == "table":
+        # Prompt โหด: บังคับส่งตารางเท่านั้น ห้ามพูดเยอะ
+        system_prompt = (
+            "คุณเป็น AI ที่ทำหน้าที่ดึง 'ตาราง' จากเอกสารมาแสดงตามคำสั่ง\n"
+            "คำสั่ง:\n"
+            "1. ดูข้อมูลใน CONTEXT ว่ามีตาราง (SOURCE: Table) ที่เกี่ยวข้องกับคำถามหรือไม่\n"
+            "2. ถ้าพบตาราง ให้ตอบด้วยรหัส [SHOW_TABLE:TBL_x] เท่านั้น ห้ามสรุปความ ห้ามอธิบายเพิ่ม\n"
+            "3. ถ้าพบหลายตารางที่เกี่ยวข้องกัน ให้ส่งมาให้ครบ เช่น [SHOW_TABLE:TBL_1] [SHOW_TABLE:TBL_2]\n"
+            "4. ถ้าเป็นคำขอให้แสดงตาราง ให้จัดลำดับความสำคัญที่ตารางก่อนเสมอ\n"
+            "\n"
+            f"=== CONTEXT ===\n{context_text}\n==============="
+        )
+    else:
+        # Prompt ปกติ
+        system_prompt = (
+            "คุณเป็นผู้ช่วยอัจฉริยะ (Smart Assistant) ที่ตอบคำถามจากเอกสารที่กำหนดให้ (Context) เท่านั้น\n"
+            "คำแนะนำ:\n"
+            "1. **วิเคราะห์คำถาม:** จับประเด็นสำคัญว่าผู้ใช้ต้องการทราบอะไร\n"
+            "2. **ค้นหาข้อมูล:** ดูข้อมูลใน Context ว่ามีส่วนไหนที่ตอบคำถามได้บ้าง\n"
+            "   - ⚠️ **สำคัญ:** แหล่งข้อมูลใน Context เรียงตามลำดับความสำคัญแล้ว ให้ความสำคัญกับลำดับต้นๆ ก่อน\n"
+            "3. **สังเคราะห์คำตอบ:** เรียบเรียงคำตอบให้น่าอ่าน เป็นภาษาไทยที่สละสลวย\n"
+            "4. **การแสดงตาราง (ยืดหยุ่น):**\n"
+            "   - [SHOW_TABLE:TBL_x] สำหรับเรียกตารางด้วยเลข (เช่น TBL_1)\n"
+            "   - [SHOW_TABLE:CAT=หมวดหมู่] สำหรับเรียกตารางด้วยหมวด\n"
+            "5. **[สำคัญ] การใช้ข้อมูลจากตาราง:**\n"
+            "   - หากข้อมูลคำตอบอยู่ในส่วนที่เป็น Table (SOURCE Type: Table) **ต้อง** ดึงข้อมูลนั้นมาตอบ อย่าบอกว่าไม่พบข้อมูล\n"
+            "   - ถ้าตารางมีข้อมูลที่ตอบคำถามได้ ให้ตอบฟันธงไปเลย\n"
+            "\n"
+            "กฎเหล็ก:\n"
+            "- ห้ามตอบนอกเหนือจากข้อมูลที่มีใน Context\n"
+            "- ถ้าไม่พบข้อมูล ให้ตอบว่า 'ไม่พบข้อมูลในเอกสารที่แนบมา'\n"
+            "- ห้ามแต่งเติมข้อมูลเอง (Anti-Hallucination)\n"
+            "\n"
+            f"=== CONTEXT ===\n{context_text}\n==============="
+        )
 
     # 4) Call LLM
     llm = _get_llm_instance(model=_LL_MODEL_FAST)
@@ -622,7 +682,24 @@ async def answer_question(
                 raise e 
         except Exception as e2:
             logger.error(f"[rag] Fallback LLM failed: {e2}")
-            return {"answer": _generate_fallback_answer(docs, "Quota/Error"), "sources": [], "intent": intent, "mode": f"{mode}+error"}
+            # [CHANGE] Fallback fail-safe: even if LLM fails, force table if in mode=table
+            if mode == "table" and found_table_ids:
+                 answer_text = "" # Trigger fail-safe below
+            else:
+                 return {"answer": _generate_fallback_answer(docs, "Quota/Error"), "sources": [], "intent": intent, "mode": f"{mode}+error"}
+
+    # [NEW FIX] Code Override / Fail-safe Mechanism
+    # ถ้าโหมด Table และ AI ไม่ยอมส่งรหัสตารางมา (หรือตอบว่างเปล่า) แต่เราค้นเจอ table ในเอกสาร
+    # เราจะยัดเยียดตารางที่เกี่ยวข้องที่สุดใส่คำตอบให้เลย
+    if mode == "table":
+        # เช็คว่า AI ตอบรหัสตารางมาไหม
+        has_table_code = "[SHOW_TABLE" in answer_text
+        
+        if not has_table_code and found_table_ids:
+            logger.info(f"[rag] Table Mode: AI didn't return table code. Forcing top table.")
+            # เอาตารางแรกที่เจอ (Rank 1) มาแสดงเลย
+            forced_table_id = found_table_ids[0]
+            answer_text = f"พบข้อมูลในตารางครับ:\n\n[SHOW_TABLE:TBL_{forced_table_id}]"
 
     # --- 5) Regex Replacement ---
     if (table_map or table_cat_map) and answer_text:
@@ -641,7 +718,11 @@ async def answer_question(
             
             def replace_match(match):
                 found_id = match.group(1)
-                if found_id in table_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[found_id]}</div>\n"
+                # Handle TBL_1 format vs 1
+                clean_id = found_id.replace("TBL_", "").strip()
+                
+                if clean_id in table_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[clean_id]}</div>\n"
+                
                 if "." in found_id:
                     simple_id = found_id.split(".")[0]
                     if simple_id in table_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[simple_id]}</div>\n"
@@ -650,7 +731,7 @@ async def answer_question(
                     return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[first_key]}</div>\n"
                 return match.group(0)
 
-            pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*TBL[_]?\s*([\d\.]+)\]", re.IGNORECASE)
+            pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*(?:TBL[_]?)?\s*([\d\.]+)\]", re.IGNORECASE)
             answer_text = pattern.sub(replace_match, answer_text)
             
         except Exception as e:

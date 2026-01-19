@@ -11,8 +11,8 @@ semantic_enricher.py
 5) Mapping Prepare: ดึงรายการ transaction ออกมาในรูปแบบโครงสร้าง
 
 ทำงานได้ทั้งแบบ:
-- rule-based อย่างเดียว (ถ้าไม่มี GEMINI_API_KEY/GOOGLE_API_KEY)
-- ใช้ Gemini ช่วย (ถ้ามี KEY)
+- rule-based อย่างเดียว (ถ้าไม่มี KEY)
+- ใช้ LLM (Custom API/Qwen) ช่วย (ถ้ามี KEY)
 """
 
 from typing import List, Dict, Any, Optional
@@ -22,35 +22,38 @@ import os
 load_dotenv()
 import re
 
+# [CHANGE] ใช้ OpenAI Client สำหรับ Custom API
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 from .schema import IngestedDocument, TextBlock, TableBlock
 
 # ---------------------------
-# Helper: Gemini model
+# [CHANGE] Model Config
 # ---------------------------
+# ใช้ Qwen 72B ซึ่งฉลาดที่สุดในลิสต์สำหรับการเข้าใจบริบท
+LLM_MODEL = os.getenv("CUSTOM_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
 
-GEMINI_MODEL = "models/gemini-2.5-flash"
 
-
-def _get_gemini_model():
+def _get_llm_client() -> Optional[OpenAI]:
     """
-    คืนโมเดล Gemini ถ้ามี API KEY; ถ้าไม่มีให้คืน None
-    - รองรับทั้ง GEMINI_API_KEY และ GOOGLE_API_KEY
+    คืน OpenAI Client สำหรับ Custom API ถ้ามี Key
     """
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    print(
-        "[DEBUG semantic_enricher] API_KEY prefix:",
-        (api_key or "None")[:10],
-    )
-    if not api_key:
+    api_key = os.getenv("CUSTOM_API_KEY")
+    base_url = os.getenv("CUSTOM_API_BASE")
+    
+    if api_key:
+        print(f"[DEBUG semantic_enricher] Custom API Key found: {api_key[:5]}...")
+    else:
+        print("[DEBUG semantic_enricher] No CUSTOM_API_KEY found.")
         return None
 
     try:
-        import google.generativeai as genai
-
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        return genai.GenerativeModel(GEMINI_MODEL)
+        return OpenAI(api_key=api_key, base_url=base_url)
     except Exception as e:
-        print("[semantic_enricher] Cannot init Gemini:", e)
+        print("[semantic_enricher] Cannot init OpenAI Client:", e)
         return None
 
 
@@ -117,16 +120,16 @@ def _guess_section_rule(block: TextBlock, index: int, total: int) -> str:
 
 def tag_sections(
     doc: IngestedDocument,
-    use_gemini: bool = False,
+    use_llm: bool = False,
 ) -> IngestedDocument:
     """
     ใส่ section label ลงใน TextBlock.extra["section"]
-    ถ้า use_gemini=True + มี KEY → ใช้ LLM ช่วย
+    ถ้า use_llm=True + มี KEY → ใช้ LLM ช่วย
     ถ้า error หรือไม่มี KEY → fallback เป็น rule-based (_guess_section_rule)
     """
-    model = _get_gemini_model() if use_gemini else None
+    client = _get_llm_client() if use_llm else None
 
-    if model:
+    if client:
         # ทำทีละก้อนใหญ่ ให้โมเดลช่วย tag section เฉพาะบาง block แรก
         joined = []
         for i, b in enumerate(doc.texts):
@@ -154,9 +157,21 @@ Text blocks:
 """
 
         try:
-            resp = model.generate_content(prompt)
+            # [CHANGE] ใช้ Chat Completion API
+            response = client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a helpful document analyzer."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+                max_tokens=2000
+            )
+            
+            resp_text = response.choices[0].message.content or ""
+            
             mapping: Dict[int, str] = {}
-            for line in (resp.text or "").splitlines():
+            for line in resp_text.splitlines():
                 line = line.strip()
                 if not line or ":" not in line:
                     continue
@@ -181,7 +196,7 @@ Text blocks:
             return doc
 
         except Exception as e:
-            print("[semantic_enricher] Gemini section tagging failed:", e)
+            print("[semantic_enricher] LLM section tagging failed:", e)
             print("[semantic_enricher] Fallback to rule-based tagging")
 
     # fallback: rule-based ทั้งหมด
@@ -263,7 +278,7 @@ def _guess_text_role_rule(block: TextBlock) -> str:
 
 def categorize_text_blocks(
     doc: IngestedDocument,
-    use_gemini: bool = False,
+    use_llm: bool = False,
 ) -> IngestedDocument:
     """
     ใส่ role ให้ TextBlock.extra["role"] เช่น:
@@ -277,9 +292,9 @@ def categorize_text_blocks(
     - qna_answer
     - other
     """
-    model = _get_gemini_model() if use_gemini else None
+    client = _get_llm_client() if use_llm else None
 
-    if model:
+    if client:
         # ส่งเฉพาะ subset ไปให้โมเดลช่วย classify
         joined = []
         for i, b in enumerate(doc.texts[:200]):
@@ -312,9 +327,21 @@ Text blocks:
 """
 
         try:
-            resp = model.generate_content(prompt)
+            # [CHANGE] ใช้ Chat Completion API
+            response = client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a helpful document analyzer."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+                max_tokens=2000
+            )
+            
+            resp_text = response.choices[0].message.content or ""
+            
             mapping: Dict[int, str] = {}
-            for line in (resp.text or "").splitlines():
+            for line in resp_text.splitlines():
                 line = line.strip()
                 if not line or ":" not in line:
                     continue
@@ -337,7 +364,7 @@ Text blocks:
             return doc
 
         except Exception as e:
-            print("[semantic_enricher] Gemini text role tagging failed:", e)
+            print("[semantic_enricher] LLM text role tagging failed:", e)
             print("[semantic_enricher] Fallback to rule-based text role")
 
     # fallback rule-based
