@@ -48,37 +48,56 @@ def _normalize_whitespace(text: str) -> str:
 
 def text_items_to_chunks(bundle: Any) -> List[Chunk]:
     chunks = []
-    # [FIX] ใช้ .texts แทน .text_items
     items = getattr(bundle, "texts", []) or []
     
-    # พยายามดึง doc_id/doc_type อย่างปลอดภัย
-    meta_obj = getattr(bundle, "metadata", None)
-    doc_id = getattr(meta_obj, "doc_id", "unknown") if meta_obj else "unknown"
-    doc_type = getattr(meta_obj, "doc_type", "generic") if meta_obj else "generic"
+    # ... (ดึง doc_id/doc_type เหมือนเดิม) ...
+
+    current_chunk_text = ""
+    current_meta = {}
     
     for item in items:
-        # รองรับทั้ง Object และ Dict
-        if isinstance(item, dict):
-            raw_text = item.get("content", "")
-            page = item.get("page")
-            meta = item
-        else:
-            raw_text = getattr(item, "content", "")
-            page = getattr(item, "page", None)
-            meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
-
+        # ดึง text
+        if isinstance(item, dict): raw_text = item.get("content", "")
+        else: raw_text = getattr(item, "content", "")
+        
         clean_text = _normalize_whitespace(raw_text)
         if not clean_text: continue
-            
+
+        # ถ้าสะสมแล้วยังไม่เกิน Target ให้รวมต่อ
+        if len(current_chunk_text) + len(clean_text) < _TARGET_CHARS:
+             current_chunk_text += "\n" + clean_text
+             # เก็บ meta ของอันแรก หรือ update ตามต้องการ
+             if not current_meta: 
+                 if isinstance(item, dict): current_meta = item
+                 else: current_meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
+        else:
+             # ถ้าเกินแล้ว ให้ save chunk เก่าก่อน
+             chunks.append(Chunk(
+                id=str(uuid.uuid4()),
+                doc_id=doc_id,
+                doc_type=doc_type,
+                source="text",
+                page=current_meta.get("page", 1),
+                content=current_chunk_text.strip(),
+                metadata=current_meta
+             ))
+             # เริ่ม chunk ใหม่
+             current_chunk_text = clean_text
+             if isinstance(item, dict): current_meta = item
+             else: current_meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
+
+    # อย่าลืม chunk สุดท้ายที่ค้างอยู่
+    if current_chunk_text:
         chunks.append(Chunk(
             id=str(uuid.uuid4()),
             doc_id=doc_id,
             doc_type=doc_type,
             source="text",
-            page=page,
-            content=clean_text,
-            metadata=meta
+            page=current_meta.get("page", 1),
+            content=current_chunk_text.strip(),
+            metadata=current_meta
         ))
+        
     return chunks
 
 def table_items_to_chunks(bundle: Any) -> List[Chunk]:
