@@ -1,3 +1,5 @@
+# backend/services/vector_store.py
+
 import chromadb
 import os
 import uuid
@@ -56,16 +58,15 @@ def index_chunks(chunks: List[Any]):
     text_ids, text_docs, text_metas = [], [], []
     
     for chunk in chunks:
-        # [FIX] เพิ่ม "image" เข้าไปใน list ที่ยอมรับ
+        # ยอมรับทั้ง text, table, image
         if getattr(chunk, "source", "text") in ["text", "table", "image"]:
             c_id = getattr(chunk, "id", str(uuid.uuid4()))
             content = getattr(chunk, "content", "")
             
-            # ดึง Metadata
+            # ดึง Metadata และแปลงเป็น primitive types
             raw_meta = getattr(chunk, "metadata", {})
             clean_meta = {}
             for k, v in raw_meta.items():
-                # แปลงค่าให้เป็น string/int/float/bool เท่านั้น
                 if isinstance(v, (str, int, float, bool)):
                     clean_meta[k] = v
                 else:
@@ -76,7 +77,7 @@ def index_chunks(chunks: List[Any]):
             clean_meta["doc_id"] = getattr(chunk, "doc_id", "unknown")
             clean_meta["page"] = getattr(chunk, "page", 1) or 1
             
-            # [NEW] สำหรับ Image ให้แน่ใจว่ามี file_path
+            # สำหรับ Image ให้แน่ใจว่ามี file_path
             if getattr(chunk, "source", "") == "image":
                 clean_meta["file_path"] = getattr(chunk, "file_path", "")
 
@@ -94,21 +95,35 @@ def search_similar(
     sources: Optional[List[str]] = None, 
     doc_types: Optional[List[str]] = None
 ) -> List[Document]:
-    """ค้นหาข้อมูล (Adapter สำหรับ RAG)"""
+    """ค้นหาข้อมูล (Adapter สำหรับ RAG) พร้อมตัวกรอง doc_ids"""
     store = VectorStore()
     
+    # สร้างเงื่อนไขการกรอง (Where Clause)
     where_conditions = []
-    if doc_ids:
-        if len(doc_ids) == 1: where_conditions.append({"doc_id": doc_ids[0]})
-        else: where_conditions.append({"doc_id": {"$in": doc_ids}})
     
+    # 1. กรองด้วย doc_ids (ถ้ามี)
+    if doc_ids:
+        if len(doc_ids) == 1:
+            where_conditions.append({"doc_id": doc_ids[0]})
+        else:
+            where_conditions.append({"doc_id": {"$in": doc_ids}})
+    
+    # 2. กรองด้วย sources (text/table/image)
     if sources:
-        if len(sources) == 1: where_conditions.append({"source": sources[0]})
-        else: where_conditions.append({"source": {"$in": sources}})
-        
+        if len(sources) == 1:
+            where_conditions.append({"source": sources[0]})
+        else:
+            where_conditions.append({"source": {"$in": sources}})
+            
+    # รวมเงื่อนไข
     final_where = None
-    if len(where_conditions) == 1: final_where = where_conditions[0]
-    elif len(where_conditions) > 1: final_where = {"$and": where_conditions}
+    if len(where_conditions) == 1:
+        final_where = where_conditions[0]
+    elif len(where_conditions) > 1:
+        final_where = {"$and": where_conditions}
+
+    if doc_ids:
+        print(f"[VectorStore] Searching '{query}' with filter: {final_where}")
 
     results = store.query_text(query, n_results=k, where=final_where)
     

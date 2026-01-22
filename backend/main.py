@@ -1,10 +1,12 @@
+# backend/main.py
+
 from __future__ import annotations
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional
 import shutil
 import os
 from pathlib import Path
@@ -29,11 +31,11 @@ root_dir = current_dir.parent
 frontend_path = root_dir / "frontend"
 app.mount("/app", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
-# --- [FIX] กำหนด Path ตรงนี้ให้ชัดเจน ---
+# กำหนด Path Ingested ให้ชัดเจน
 INGESTED_ROOT = Path(r"D:\DATA_INGES\ingested")
 os.makedirs(INGESTED_ROOT, exist_ok=True)
 
-# [FIX] ใช้ str(INGESTED_ROOT) เพื่อให้ Mount ไปที่ D:\... จริงๆ
+# Mount Ingested folder
 app.mount("/ingested", StaticFiles(directory=str(INGESTED_ROOT)), name="ingested")
 
 
@@ -43,15 +45,20 @@ def root():
 
 class AskRequest(BaseModel):
     query: str
-    doc_ids: Optional[List[str]] = None
+    doc_ids: Optional[List[str]] = None  # [แก้ไข] เพิ่ม doc_ids ตรงนี้
     top_k: Optional[int] = 5
     mode: Optional[str] = "auto"
 
 @app.post("/ask")
 async def ask(req: AskRequest):
-    if not req.query.strip(): raise HTTPException(status_code=400, detail="Missing query")
+    if not req.query.strip(): 
+        raise HTTPException(status_code=400, detail="Missing query")
+    
     try:
-        result = answer_question(req.query)
+        # [แก้ไข] ส่ง req.doc_ids ไปยังฟังก์ชัน RAG
+        # ถ้า Frontend ส่ง doc_ids มา (เช่นเลือกไฟล์แล้ว) Backend จะค้นหาเฉพาะไฟล์นั้น
+        result = answer_question(req.query, doc_ids=req.doc_ids)
+        
         if "intent" not in result: result["intent"] = "qa"
         if "mode" not in result: result["mode"] = req.mode
         return result

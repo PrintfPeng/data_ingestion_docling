@@ -1,9 +1,10 @@
+# backend/services/chunking.py
+
 from __future__ import annotations
 import re
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
-from docling_core.transforms.chunker.hierarchical_chunker import HierarchicalChunker
 
 # --- Configuration ---
 _TARGET_CHARS = 1000
@@ -43,14 +44,17 @@ def _normalize_whitespace(text: str) -> str:
     return text.strip()
 
 # -------------------------------------------------------------------
-# Converter Functions (FIXED: แก้ชื่อตัวแปรให้ตรงกับ models.py)
+# Converter Functions
 # -------------------------------------------------------------------
 
 def text_items_to_chunks(bundle: Any) -> List[Chunk]:
     chunks = []
     items = getattr(bundle, "texts", []) or []
     
-    # ... (ดึง doc_id/doc_type เหมือนเดิม) ...
+    # [FIX] เพิ่มส่วนดึง metadata ที่หายไป
+    meta_obj = getattr(bundle, "metadata", None)
+    doc_id = getattr(meta_obj, "doc_id", "unknown") if meta_obj else "unknown"
+    doc_type = getattr(meta_obj, "doc_type", "generic") if meta_obj else "generic"
 
     current_chunk_text = ""
     current_meta = {}
@@ -66,7 +70,6 @@ def text_items_to_chunks(bundle: Any) -> List[Chunk]:
         # ถ้าสะสมแล้วยังไม่เกิน Target ให้รวมต่อ
         if len(current_chunk_text) + len(clean_text) < _TARGET_CHARS:
              current_chunk_text += "\n" + clean_text
-             # เก็บ meta ของอันแรก หรือ update ตามต้องการ
              if not current_meta: 
                  if isinstance(item, dict): current_meta = item
                  else: current_meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
@@ -74,8 +77,8 @@ def text_items_to_chunks(bundle: Any) -> List[Chunk]:
              # ถ้าเกินแล้ว ให้ save chunk เก่าก่อน
              chunks.append(Chunk(
                 id=str(uuid.uuid4()),
-                doc_id=doc_id,
-                doc_type=doc_type,
+                doc_id=doc_id,     # [FIX] ตัวแปรนี้จะใช้ได้แล้ว
+                doc_type=doc_type, # [FIX] ตัวแปรนี้จะใช้ได้แล้ว
                 source="text",
                 page=current_meta.get("page", 1),
                 content=current_chunk_text.strip(),
@@ -102,7 +105,6 @@ def text_items_to_chunks(bundle: Any) -> List[Chunk]:
 
 def table_items_to_chunks(bundle: Any) -> List[Chunk]:
     chunks = []
-    # [FIX] ใช้ .tables แทน .table_items
     items = getattr(bundle, "tables", []) or []
     
     meta_obj = getattr(bundle, "metadata", None)
@@ -117,16 +119,12 @@ def table_items_to_chunks(bundle: Any) -> List[Chunk]:
                  item["html_content"] = item["content"]
             meta = item
         else:
-            # Pydantic object
             rows = getattr(item, "rows", [])
             cols = getattr(item, "columns", [])
-            
-            # พยายามหา markdown ใน extra หรือสร้างเอง
             extra = getattr(item, "extra", {}) or {}
             content = extra.get("markdown_content", "")
             
             if not content:
-                 # สร้าง Markdown ง่ายๆ กันเหนียว
                  header = "| " + " | ".join(cols) + " |"
                  sep = "| " + " | ".join(["---"] * len(cols)) + " |"
                  body_rows = ["| " + " | ".join(r) + " |" for r in rows]
@@ -150,7 +148,6 @@ def table_items_to_chunks(bundle: Any) -> List[Chunk]:
 
 def image_items_to_chunks(bundle: Any) -> List[Chunk]:
     chunks = []
-    # [FIX] ใช้ .images แทน .image_items
     items = getattr(bundle, "images", []) or []
     
     meta_obj = getattr(bundle, "metadata", None)

@@ -3,89 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Document & Image Assistant</title>
+    <title>AI Knowledge Base</title>
     
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/style.css">
     
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
-<body class="bg-gray-50 h-screen flex overflow-hidden font-sarabun text-slate-800">
+<body>
 
-    <aside class="w-80 bg-white border-r border-gray-200 flex flex-col hidden md:flex shadow-sm z-20">
-        <div class="p-5 border-b border-gray-100">
-            <div class="flex items-center gap-3 text-indigo-600 mb-1">
-                <i class="fa-solid fa-robot text-2xl"></i>
-                <h1 class="text-xl font-bold tracking-tight">AI Assistant</h1>
-            </div>
-            <p class="text-xs text-slate-400 pl-9">Document & Image Retrieval</p>
+    <div id="loading-overlay" class="hidden">
+        <div class="spinner"></div>
+        <p id="loading-text">กำลังประมวลผลข้อมูล...</p>
+    </div>
+
+    <div class="container">
+
+        <div id="home-view">
+            <header class="main-header">
+                <h1><i class="fa-solid fa-brain"></i> AI Knowledge Base</h1>
+                <p>เลือกเอกสารเพื่อเริ่มสนทนา หรืออัปโหลดเอกสารใหม่</p>
+            </header>
+
+            <section class="upload-section">
+                <h2><i class="fa-solid fa-cloud-arrow-up"></i> Ingest New Data</h2>
+                <form id="upload-form">
+                    <div class="form-group">
+                        <label>ตั้งชื่อโปรเจกต์ (Doc ID):</label>
+                        <input type="text" id="doc-id-input" placeholder="เช่น AI-DURIAN, Policy-2024" required>
+                        <small>ชื่อนี้จะถูกใช้เป็นชื่อ Folder และชื่อการ์ด</small>
+                    </div>
+                    <div class="form-group">
+                        <label>เลือกไฟล์ (PDF):</label>
+                        <input type="file" id="file-input" accept=".pdf" required>
+                    </div>
+                    <button type="submit" class="btn-primary">
+                        <i class="fa-solid fa-rocket"></i> Upload & Ingest
+                    </button>
+                </form>
+            </section>
+
+            <section class="documents-section">
+                <h2><i class="fa-solid fa-folder-open"></i> Available Knowledge</h2>
+                <div id="doc-grid" class="doc-grid">
+                    </div>
+            </section>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-4 scrollbar-thin">
-            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">Available Documents</h3>
-            <div id="documentList" class="space-y-1">
-                <div class="text-sm text-slate-400 text-center py-4">กำลังโหลดรายชื่อ...</div>
-            </div>
-        </div>
-
-        <div class="p-4 border-t border-gray-100 bg-gray-50">
-            <label for="fileInput" class="flex flex-col items-center justify-center w-full h-24 border-2 border-indigo-200 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-all group">
-                <div class="flex flex-col items-center justify-center pt-2 pb-3">
-                    <i class="fa-solid fa-cloud-arrow-up text-indigo-400 text-xl mb-1 group-hover:scale-110 transition-transform"></i>
-                    <p class="mb-1 text-xs text-slate-500 font-medium">Click to upload PDF</p>
-                </div>
-                <input id="fileInput" type="file" class="hidden" accept=".pdf" />
-            </label>
-            <div id="uploadStatus" class="mt-2 text-xs text-center min-h-[1.5em] font-medium transition-colors"></div>
-        </div>
-    </aside>
-
-    <main class="flex-1 flex flex-col relative min-w-0">
-        <header class="bg-white/80 backdrop-blur-md border-b border-gray-200 p-4 flex justify-between items-center md:hidden sticky top-0 z-10">
-            <span class="font-bold text-indigo-600"><i class="fa-solid fa-robot mr-2"></i>AI Assistant</span>
-            <button id="toggleSidebar" class="text-slate-500 hover:text-indigo-600"><i class="fa-solid fa-bars text-xl"></i></button>
-        </header>
-
-        <div id="chatContainer" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 scroll-smooth bg-slate-50">
-            <div class="flex gap-4 max-w-3xl mx-auto">
-                <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-600">
-                    <i class="fa-solid fa-robot"></i>
-                </div>
-                <div class="flex-1 space-y-2">
-                    <div class="bg-white border border-gray-200 p-5 rounded-2xl rounded-tl-none shadow-sm text-slate-700 leading-relaxed">
-                        <p>สวัสดีครับ! ผมพร้อมตอบคำถามจากเอกสารของคุณ และสามารถดึงรูปภาพประกอบจากเอกสาร (เช่น กราฟ, ตาราง, หรือรูปสินค้า) มาแสดงให้ดูได้ทันทีครับ 📸</p>
+        <div id="chat-view" class="hidden">
+            <div class="chat-container">
+                <div class="chat-header">
+                    <div class="chat-title">
+                        <button id="back-btn" class="btn-icon"><i class="fa-solid fa-arrow-left"></i></button>
+                        <div>
+                            <h3>RAG Chat</h3>
+                            <span id="current-doc-name" class="badge">Selecting...</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <div class="p-4 bg-white border-t border-gray-200 z-10">
-            <div class="max-w-4xl mx-auto relative">
-                <div id="selectedDocBadge" class="hidden absolute -top-10 left-0 bg-indigo-600 text-white text-xs px-3 py-1 rounded-full shadow-md flex items-center gap-2 animate-fade-in-up">
-                    <i class="fa-regular fa-file-pdf"></i> <span id="currentDocName">Doc Name</span>
-                    <button onclick="clearSelection()" class="hover:text-red-200 ml-1"><i class="fa-solid fa-times"></i></button>
+                <div id="chat-history" class="chat-history">
+                    <div class="message bot-message">
+                        <div class="bubble">สวัสดีครับ มีอะไรให้ช่วยเกี่ยวกับเอกสารนี้ถามได้เลย!</div>
+                    </div>
                 </div>
 
-                <div class="flex gap-2 items-end bg-gray-100 p-2 rounded-2xl border border-transparent focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-100 transition-all shadow-inner">
-                    <textarea id="chatInput" rows="1" class="flex-1 bg-transparent border-none focus:ring-0 text-slate-700 placeholder-slate-400 resize-none py-3 px-2 max-h-32 outline-none" placeholder="พิมพ์คำถามเกี่ยวกับเอกสาร..."></textarea>
-                    <button id="sendBtn" class="p-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
-                        <i class="fa-solid fa-paper-plane"></i>
-                    </button>
+                <div class="chat-input-area">
+                    <form id="chat-form">
+                        <input type="text" id="chat-input" placeholder="ถามคำถามเกี่ยวกับเอกสารนี้..." autocomplete="off">
+                        <button type="submit" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
+                    </form>
                 </div>
-                <p class="text-center text-[10px] text-slate-400 mt-2">AI can make mistakes. Please verify important information.</p>
             </div>
         </div>
-    </main>
 
-    <div id="imageModal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center backdrop-blur-sm opacity-0 transition-opacity duration-300">
-        <button class="absolute top-5 right-5 text-white/70 hover:text-white text-4xl transition-colors z-50" onclick="closeModal()">&times;</button>
-        <div class="relative w-full h-full flex items-center justify-center p-4">
-            <img id="modalImage" src="" class="max-w-full max-h-[90vh] rounded-lg shadow-2xl transform scale-95 transition-transform duration-300">
-            <div class="absolute bottom-5 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm backdrop-blur-md" id="modalCaption">
-                Page Info
-            </div>
-        </div>
     </div>
 
     <script src="js/app.js"></script>
