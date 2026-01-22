@@ -1,4 +1,4 @@
-# backend/scripts/run_ingestion.py
+# scripts/run_ingestion.py
 
 from __future__ import annotations
 
@@ -92,19 +92,19 @@ def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[Ima
             description_md = ""
             
             if model:
-                # [FIX] เพิ่ม Retry + เพิ่มเวลา Sleep เป็น 10 วินาที
                 max_retries = 3
                 for attempt in range(max_retries):
-                    description_md = generate_image_description_md(model, image_path)
+                    try:
+                        description_md = generate_image_description_md(model, image_path)
+                        if description_md:
+                            time.sleep(5)
+                            break
+                    except Exception as e:
+                        print(f"      [Warn] AI Error: {e}")
                     
-                    if description_md:
-                        time.sleep(5) # พัก 5 วินาที ถ้าสำเร็จ
-                        break
-                    else:
-                        # ถ้าไม่สำเร็จ (อาจจะ 429) ให้รอนานขึ้นแล้วลองใหม่
-                        wait_time = 10 * (attempt + 1)
-                        print(f"      [Retry {attempt+1}/{max_retries}] Waiting {wait_time}s before retrying...")
-                        time.sleep(wait_time)
+                    wait_time = 10 * (attempt + 1)
+                    print(f"      [Retry {attempt+1}/{max_retries}] Waiting {wait_time}s before retrying...")
+                    time.sleep(wait_time)
             
             block = ImageBlock(
                 id=f"img_{img_counter:04d}",
@@ -209,6 +209,30 @@ def run_ingestion_pipeline(
     parser = DoclingParser(output_dir=str(Path(output_root)/doc_id), image_dir=str(image_dir))
     doc_result = parser.parse_file(str(pdf_path))
     
+    # [NEW LOGIC] แทนที่ ด้วย Link รูปภาพจริงๆ
+    md_content = doc_result.get("markdown", "")
+    saved_images = doc_result.get("saved_images", [])
+
+    if md_content:
+        # วนลูปแทนที่ทีละรูป (Docling มักจะส่งมาเรียงตามลำดับอยู่แล้ว)
+        for img in saved_images:
+            img_name = Path(img["path"]).name
+            # Path ที่ Frontend เข้าใจได้
+            web_path = f"/ingested/{doc_id}/images/{img_name}"
+            
+            # แทนที่ ด้วย Markdown Link
+            # replace(..., 1) เพื่อแทนที่ทีละ 1 จุด เรียงตามลำดับ
+            md_content = md_content.replace("", f"![{img_name}]({web_path})", 1)
+
+        # Save ไฟล์ .md
+        md_path = Path(output_root) / doc_id / f"{doc_id}.md"
+        try:
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(md_content)
+            print(f"[Docling] Saved enhanced Markdown to: {md_path}")
+        except Exception as e:
+            print(f"[Warn] Could not save markdown file: {e}")
+
     doc = docling_to_ingested_doc(doc_result, doc_id, str(pdf_path), vision_model=vision_model)
     doc.metadata.doc_type = doc_type
     print(f"[Docling] Extracted: Texts={len(doc.texts)}, Tables={len(doc.tables)}, Images={len(doc.images)}")

@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import uuid
 from typing import Any, Dict, List, Literal, Optional
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 # --- Configuration ---
@@ -51,7 +52,6 @@ def text_items_to_chunks(bundle: Any) -> List[Chunk]:
     chunks = []
     items = getattr(bundle, "texts", []) or []
     
-    # [FIX] เพิ่มส่วนดึง metadata ที่หายไป
     meta_obj = getattr(bundle, "metadata", None)
     doc_id = getattr(meta_obj, "doc_id", "unknown") if meta_obj else "unknown"
     doc_type = getattr(meta_obj, "doc_type", "generic") if meta_obj else "generic"
@@ -67,29 +67,25 @@ def text_items_to_chunks(bundle: Any) -> List[Chunk]:
         clean_text = _normalize_whitespace(raw_text)
         if not clean_text: continue
 
-        # ถ้าสะสมแล้วยังไม่เกิน Target ให้รวมต่อ
         if len(current_chunk_text) + len(clean_text) < _TARGET_CHARS:
              current_chunk_text += "\n" + clean_text
              if not current_meta: 
                  if isinstance(item, dict): current_meta = item
                  else: current_meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
         else:
-             # ถ้าเกินแล้ว ให้ save chunk เก่าก่อน
              chunks.append(Chunk(
                 id=str(uuid.uuid4()),
-                doc_id=doc_id,     # [FIX] ตัวแปรนี้จะใช้ได้แล้ว
-                doc_type=doc_type, # [FIX] ตัวแปรนี้จะใช้ได้แล้ว
+                doc_id=doc_id,
+                doc_type=doc_type,
                 source="text",
                 page=current_meta.get("page", 1),
                 content=current_chunk_text.strip(),
                 metadata=current_meta
              ))
-             # เริ่ม chunk ใหม่
              current_chunk_text = clean_text
              if isinstance(item, dict): current_meta = item
              else: current_meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
 
-    # อย่าลืม chunk สุดท้ายที่ค้างอยู่
     if current_chunk_text:
         chunks.append(Chunk(
             id=str(uuid.uuid4()),
@@ -157,14 +153,28 @@ def image_items_to_chunks(bundle: Any) -> List[Chunk]:
     for item in items:
         if isinstance(item, dict):
             caption = item.get("caption", "")
+            file_path = item.get("file_path", "")
             page = item.get("page")
             meta = item
         else:
             caption = getattr(item, "caption", "")
+            file_path = getattr(item, "file_path", "")
             page = getattr(item, "page", None)
             meta = item.model_dump() if hasattr(item, "model_dump") else item.__dict__
 
         if not caption: caption = f"Image from page {page}"
+
+        # [NEW LOGIC] สร้าง Content ที่มี Markdown Link
+        # รูปแบบ: ![ชื่อรูป](/ingested/doc_id/images/xxx.png)
+        # AI จะเห็น Text นี้และสามารถเอาไปตอบได้
+        
+        img_filename = Path(file_path).name
+        if img_filename:
+            web_path = f"/ingested/{doc_id}/images/{img_filename}"
+            # รวม Link ไว้ใน Content เพื่อให้ RAG Index ไปด้วย
+            full_content = f"![{img_filename}]({web_path})\n\nคำบรรยายภาพ: {caption}"
+        else:
+            full_content = caption
         
         chunks.append(Chunk(
             id=str(uuid.uuid4()),
@@ -172,7 +182,7 @@ def image_items_to_chunks(bundle: Any) -> List[Chunk]:
             doc_type=doc_type,
             source="image",
             page=page,
-            content=caption,
+            content=full_content, # ใช้ Content แบบใหม่
             metadata=meta
         ))
     return chunks
