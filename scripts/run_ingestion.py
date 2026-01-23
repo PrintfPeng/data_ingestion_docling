@@ -20,6 +20,104 @@ from ingestion.semantic_enricher import tag_sections, categorize_text_blocks, no
 from ingestion.image_extractor import _get_gemini_vision_client, generate_image_description_md
 
 
+# -----------------------------------------------------------------------------
+# [NEW] Custom Markdown Generator
+# สร้าง Markdown ใหม่โดยเรียงตามตำแหน่งจริง (Page -> Top -> Left)
+# -----------------------------------------------------------------------------
+def generate_custom_markdown(doc, doc_id, saved_images_meta, output_root) -> str:
+    """
+    สร้าง Markdown Content โดยการดึง Text, Table, Image มาเรียงใหม่ตามตำแหน่ง
+    เพื่อให้มั่นใจว่ารูปภาพจะแทรกอยู่ในเนื้อหาที่ถูกต้อง ไม่ไปกองรวมกัน
+    """
+    elements = []
+    
+    # 1. รวบรวม Text
+    if hasattr(doc, "texts"):
+        for item in doc.texts:
+            if item.prov:
+                p = item.prov[0]
+                elements.append({
+                    "type": "text",
+                    "page": p.page_no,
+                    "top": p.bbox.t,
+                    "left": p.bbox.l,
+                    "content": item.text.strip(),
+                    "obj": item
+                })
+
+    # 2. รวบรวม Table
+    if hasattr(doc, "tables"):
+        for item in doc.tables:
+            if item.prov:
+                p = item.prov[0]
+                # พยายาม export เป็น markdown table
+                try:
+                    md_table = item.export_to_markdown()
+                except:
+                    md_table = "[Table cannot be exported]"
+                
+                elements.append({
+                    "type": "table",
+                    "page": p.page_no,
+                    "top": p.bbox.t,
+                    "left": p.bbox.l,
+                    "content": md_table,
+                    "obj": item
+                })
+
+    # 3. รวบรวม Image (จากที่เซฟไว้)
+    # เราต้อง Match รูปใน doc.pictures กับรูปที่เซฟลงไฟล์แล้วใน saved_images_meta
+    if hasattr(doc, "pictures"):
+        for item in doc.pictures:
+            if item.prov:
+                p = item.prov[0]
+                
+                # หาไฟล์ที่ตรงกัน (Match by Page & BBox)
+                matched_img = None
+                for saved in saved_images_meta:
+                    s_bbox = saved["bbox"]
+                    if saved["page"] == p.page_no and abs(s_bbox[1] - p.bbox.t) < 5.0: # Tolerance 5px
+                        matched_img = saved
+                        break
+                
+                if matched_img:
+                    img_filename = Path(matched_img["path"]).name
+                    web_path = f"/ingested/{doc_id}/images/{img_filename}"
+                    # สร้าง Markdown Image Link
+                    img_md = f"\n![{img_filename}]({web_path})\n"
+                    
+                    elements.append({
+                        "type": "image",
+                        "page": p.page_no,
+                        "top": p.bbox.t,
+                        "left": p.bbox.l,
+                        "content": img_md,
+                        "obj": item
+                    })
+
+    # 4. เรียงลำดับ (Page -> Top -> Left)
+    # การเรียงแบบนี้คือ "Reading Order" ตามธรรมชาติ
+    elements.sort(key=lambda x: (x["page"], x["top"], x["left"]))
+
+    # 5. สร้าง String
+    md_lines = []
+    last_page = 0
+    
+    for el in elements:
+        # เพิ่มตัวบอกหน้า (Optional: ช่วยให้อ่านง่ายขึ้น)
+        if el["page"] > last_page:
+            md_lines.append(f"\n\n\n\n")
+            last_page = el["page"]
+            
+        content = el["content"]
+        if not content: continue
+        
+        md_lines.append(content)
+        md_lines.append("\n\n") # เว้นบรรทัดระหว่าง Element
+
+    return "".join(md_lines)
+
+
 def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[ImageBlock]:
     """
     ฟังก์ชันผูกบริบท Text รอบข้างเข้ากับรูปภาพ และให้ Gemini เขียนคำบรรยาย
@@ -27,37 +125,25 @@ def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[Ima
     doc = doc_result["doc"]
     saved_images_meta = doc_result["saved_images"]
     
-    # map metadata รูป
-    img_lookup = {}
-    for img in saved_images_meta:
-        bbox = img["bbox"]
-        if bbox:
-            key = (img["page"], round(bbox[1], 1), round(bbox[0], 1))
-            img_lookup[key] = img
-
-    image_blocks = []
-    
-    # 1. เตรียมข้อมูล Text และ Image
+    # Logic เดิมในการจับคู่รูปภาพและสร้าง Caption
     all_elements = []
     for item in getattr(doc, "texts", []):
         if item.prov:
             p = item.prov[0]
             all_elements.append({
-                "type": "text", "page": p.page_no, "top": p.bbox.t, "left": p.bbox.l,
-                "content": item.text, "obj": item
+                "type": "text", "page": p.page_no, "top": p.bbox.t, "content": item.text
             })
 
     for item in getattr(doc, "pictures", []):
         if item.prov:
             p = item.prov[0]
             all_elements.append({
-                "type": "image", "page": p.page_no, "top": p.bbox.t, "left": p.bbox.l,
-                "obj": item
+                "type": "image", "page": p.page_no, "top": p.bbox.t, "obj": item
             })
 
     all_elements.sort(key=lambda x: (x["page"], x["top"]))
 
-    # 2. วนลูปประมวลผล
+    image_blocks = []
     current_heading = "Unknown Section"
     last_text_paragraph = "No preceding text"
     img_counter = 0
@@ -76,6 +162,7 @@ def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[Ima
             img_counter += 1
             page = elem["page"]
             
+            # Match กับไฟล์ที่เซฟ
             matching_saved = None
             for s_img in saved_images_meta:
                  s_bbox = s_img["bbox"]
@@ -87,7 +174,6 @@ def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[Ima
 
             image_path = matching_saved["path"]
             
-            # [AI] ให้ Gemini เขียนคำบรรยาย พร้อม Retry Logic
             print(f"   -> Generating description for Image #{img_counter} (Page {page})...")
             description_md = ""
             
@@ -116,8 +202,7 @@ def enrich_images_with_context(doc_result: dict, doc_id: str, model) -> list[Ima
                     "source": "docling_contextual",
                     "context": {
                         "nearest_heading": current_heading,
-                        "preceding_text": last_text_paragraph,
-                        "page_topic": f"Content on Page {page}" 
+                        "preceding_text": last_text_paragraph
                     },
                     "chunk_metadata": (
                         f"Image Description: {description_md[:100]}... "
@@ -209,29 +294,21 @@ def run_ingestion_pipeline(
     parser = DoclingParser(output_dir=str(Path(output_root)/doc_id), image_dir=str(image_dir))
     doc_result = parser.parse_file(str(pdf_path))
     
-    # [NEW LOGIC] แทนที่ ด้วย Link รูปภาพจริงๆ
-    md_content = doc_result.get("markdown", "")
+    # [FIXED] ใช้ฟังก์ชันสร้าง Markdown ใหม่แบบ Custom
+    # เพื่อแก้ปัญหาภาพไปกองรวมกัน และใส่ Link ที่ถูกต้อง
     saved_images = doc_result.get("saved_images", [])
-
-    if md_content:
-        # วนลูปแทนที่ทีละรูป (Docling มักจะส่งมาเรียงตามลำดับอยู่แล้ว)
-        for img in saved_images:
-            img_name = Path(img["path"]).name
-            # Path ที่ Frontend เข้าใจได้
-            web_path = f"/ingested/{doc_id}/images/{img_name}"
-            
-            # แทนที่ ด้วย Markdown Link
-            # replace(..., 1) เพื่อแทนที่ทีละ 1 จุด เรียงตามลำดับ
-            md_content = md_content.replace("", f"![{img_name}]({web_path})", 1)
-
-        # Save ไฟล์ .md
+    doc_obj = doc_result.get("doc")
+    
+    try:
+        print("[Docling] Generating custom markdown layout...")
+        custom_md = generate_custom_markdown(doc_obj, doc_id, saved_images, output_root)
+        
         md_path = Path(output_root) / doc_id / f"{doc_id}.md"
-        try:
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write(md_content)
-            print(f"[Docling] Saved enhanced Markdown to: {md_path}")
-        except Exception as e:
-            print(f"[Warn] Could not save markdown file: {e}")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(custom_md)
+        print(f"[Docling] Saved Custom Markdown to: {md_path}")
+    except Exception as e:
+        print(f"[Warn] Could not generate/save markdown: {e}")
 
     doc = docling_to_ingested_doc(doc_result, doc_id, str(pdf_path), vision_model=vision_model)
     doc.metadata.doc_type = doc_type
