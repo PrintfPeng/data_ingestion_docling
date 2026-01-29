@@ -71,9 +71,9 @@ def check_custom_api():
             model=model_name,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "ตอบสั้นๆ: 1 + 1 เท่ากับเท่าไหร่?"}
+                {"role": "user", "content": "12.123 × 12.123 ได้เท่าไหร่? แสดงวิธีทำด้วย"}
             ],
-            max_tokens=50,
+            max_tokens=150,
             temperature=0.1
         )
         duration = time.time() - start_time

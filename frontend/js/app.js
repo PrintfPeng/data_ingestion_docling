@@ -28,13 +28,15 @@ const sanitizeConfig = {
         'b','i','em','strong','a','p','br','ul','ol','li',
         'table','thead','tbody','tr','th','td','caption',
         'div','span','details','summary',
-        'svg','path','circle'
+        'svg','path','circle',
+        'img'
     ],
     ALLOWED_ATTR: [
         'href','target','class','id','style',
         'fill','viewBox','d',
         'stroke','stroke-width','stroke-linecap','stroke-linejoin',
-        'open'
+        'open',
+        'src', 'alt'
     ],
     ALLOW_DATA_ATTR: false
 };
@@ -244,6 +246,12 @@ function appendMessage(role, text, options = {}) {
         answerText = extracted.text;
         answerTables = extracted.tables;
     }
+
+    answerText = answerText.replace(/\[SHOW_IMAGE:\s*([^\]]+)\]/g, (match, path) => {
+        const cleanPath = path.trim();
+        // ใส่ class ให้รูปสวยๆ หน่อย
+        return `<div class="my-4"><img src="/${cleanPath}" alt="Result Image" class="max-w-full h-auto rounded-lg shadow-md border border-gray-200"></div>`;
+    });
     
     renderAnswerText(textContainer, answerText);
     bubble.appendChild(textContainer);

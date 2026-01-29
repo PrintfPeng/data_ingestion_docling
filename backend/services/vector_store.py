@@ -123,6 +123,27 @@ def get_vector_store(
     _vectordb_cache[key] = vectordb
     return vectordb
 
+# -----------------------------------------------------------------------------
+# [NEW] ฟังก์ชันล้าง Cache แบบสั่งตาย (Global Reset)
+# -----------------------------------------------------------------------------
+def reset_vector_store_cache():
+    """
+    ท่าไม้ตาย: สั่งล้าง Cache ของ Vector DB ทั้งหมดทันที
+    ใช้เรียกตอน Upload เสร็จ เพื่อให้ครั้งต่อไประบบต้องโหลด DB ใหม่แน่นอน
+    """
+    global _vectordb_cache
+    
+    if _vectordb_cache:
+        print(f"[vector_store] 🧹 Force clearing {_vectordb_cache} cache entries...")
+        _vectordb_cache.clear()
+    
+    # บังคับ Python คืน RAM และปลด File Lock ทันที (แก้ปัญหา Windows Error)
+    try:
+        import gc
+        gc.collect()
+        print("[vector_store] 🗑️ Garbage collection done.")
+    except Exception as e:
+        print(f"[vector_store] GC Error: {e}")
 
 def _normalize_metadata(md: dict) -> dict:
     """แปลงค่า complex types เป็น string เพื่อให้ Chroma เก็บได้"""
@@ -136,11 +157,6 @@ def _normalize_metadata(md: dict) -> dict:
             except Exception:
                 simple[k] = repr(v)
     return simple
-
-
-# [CHANGE] ลบฟังก์ชัน _raise_embedding_http_error ของ Google ออก
-# เพราะเราจะใช้ General Exception handling แทน
-
 
 # -----------------------------------------------------------
 # 1) Indexing: เอา chunks ไปเก็บใน Chroma

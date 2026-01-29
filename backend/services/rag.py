@@ -33,6 +33,11 @@ except ImportError:
 
 from .vector_store import search_similar
 
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except ImportError:
+    ChatGoogleGenerativeAI = None
+
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
@@ -148,11 +153,32 @@ def _get_llm_instance(model: Optional[str] = None, temperature: float = _DEFAULT
             openai_api_base=api_base,
             max_retries=2,
             request_timeout=60 # เพิ่ม timeout เผื่อโมเดลใหญ่ตอบช้า
+            # max_tokens=150 # เพิ่มเพื่อรองรับคำตอบยาวขึ้น
         )
     except Exception as e:
         logger.exception("[rag] Failed to init LLM: %s", e)
         return None
 
+
+# backend/services/rag.py
+
+def _get_google_llm():
+    """สร้าง Google Gemini Instance เป็นแผนสำรอง"""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key or not ChatGoogleGenerativeAI:
+        return None
+    
+    try:
+        return ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash", # หรือ gemini-1.5-flash
+            google_api_key=api_key,
+            temperature=0.3,
+            max_tokens=2048,
+            convert_system_message_to_human=True # บางที Gemini ไม่ชอบ System msg
+        )
+    except Exception as e:
+        logger.error(f"[rag] Failed to init Google LLM: {e}")
+        return None
 
 # -------------------------------------------------------------------
 # Helper: Reranker Model (Lazy Load)
@@ -247,7 +273,9 @@ def _filter_relevant_docs(query: str, docs: list, min_score: float = MIN_SCORE_T
 def _build_context_text(docs) -> str:
     parts: List[str] = []
     total_tokens = 0
-    MAX_TOKENS_ESTIMATE = 12000
+    # MAX_TOKENS_ESTIMATE = 12000
+    # [🔥 แก้ตรงนี้] ลดจาก 12000 เหลือ 4000
+    MAX_TOKENS_ESTIMATE = 4000
 
     parts.append("⚠️ **แหล่งข้อมูลอ้างอิง:** (เรียงตามความเกี่ยวข้อง)\n")
 
@@ -658,48 +686,61 @@ async def answer_question(
             "- ถ้าไม่พบข้อมูล ให้ตอบว่า 'ไม่พบข้อมูลในเอกสารที่แนบมา'\n"
             "- ห้ามแต่งเติมข้อมูลเอง (Anti-Hallucination)\n"
             "\n"
+            "[IMAGE HANDLING]\n"
+            "ถ้าผู้ใช้ถามหารูปภาพ หรือใน Context มีข้อมูลรูปภาพที่เกี่ยวข้อง:\n"
+            "1. มองหาข้อมูลที่ขึ้นต้นด้วย 'Path: ...' ใน Context\n"
+            "2. ตอบโดยใช้ Tag นี้แทรกในคำตอบ: [SHOW_IMAGE: <path_file>]\n"
+            "ตัวอย่าง: 'นี่คือรูปที่คุณต้องการครับ [SHOW_IMAGE: ingested/doc_001/images/img_1.png]'"
             f"=== CONTEXT ===\n{context_text}\n==============="
         )
-
-    # 4) Call LLM
+# -------------------------------------------------------------------
+    # 4) Call LLM (Chain of Fallback: OpenRouter -> Google -> Raw)
+    # -------------------------------------------------------------------
     llm = _get_llm_instance(model=_LL_MODEL_FAST)
     
-    answer_text = "AI Error"
+    answer_text = ""
+    ai_response = None
+    
+    # --- 1. แผน A: ลองใช้ Primary LLM (OpenRouter/Qwen) ---
     try:
-        if not llm: raise Exception("Primary LLM not configured")
-        
-        resp = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
-        answer_text = getattr(resp, "content", str(resp))
-        
+        if llm:
+            # logger.info(f"[rag] 🚀 Trying Primary LLM ({_LL_MODEL_FAST})...")
+            ai_response = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+            answer_text = getattr(ai_response, "content", str(ai_response))
     except Exception as e:
-        logger.warning(f"[rag] Primary LLM ({_LL_MODEL_FAST}) failed: {e}")
-        try:
-            llm_fallback = _get_llm_instance(model=_LL_MODEL_SMALL)
-            if llm_fallback:
-                resp = await llm_fallback.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
-                answer_text = getattr(resp, "content", str(resp))
-            else:
-                raise e 
-        except Exception as e2:
-            logger.error(f"[rag] Fallback LLM failed: {e2}")
-            # [CHANGE] Fallback fail-safe: even if LLM fails, force table if in mode=table
-            if mode == "table" and found_table_ids:
-                 answer_text = "" # Trigger fail-safe below
-            else:
-                 return {"answer": _generate_fallback_answer(docs, "Quota/Error"), "sources": [], "intent": intent, "mode": f"{mode}+error"}
+        logger.warning(f"[rag] ❌ Primary LLM failed: {e}")
 
-    # [NEW FIX] Code Override / Fail-safe Mechanism
-    # ถ้าโหมด Table และ AI ไม่ยอมส่งรหัสตารางมา (หรือตอบว่างเปล่า) แต่เราค้นเจอ table ในเอกสาร
-    # เราจะยัดเยียดตารางที่เกี่ยวข้องที่สุดใส่คำตอบให้เลย
-    if mode == "table":
-        # เช็คว่า AI ตอบรหัสตารางมาไหม
-        has_table_code = "[SHOW_TABLE" in answer_text
+    # --- 2. แผน B: ถ้าแผน A พัง ให้ลองใช้ Google Gemini (Backup) ---
+    if not answer_text or answer_text == "AI Error":
+        try:
+            google_llm = _get_google_llm() # เรียกฟังก์ชันที่เราสร้างไว้
+            if google_llm:
+                logger.info("[rag] 🔄 Switching to Backup LLM: Google Gemini...")
+                # ใช้ ainvoke เพื่อให้ทำงานแบบ Async ไม่บล็อกระบบ
+                ai_response = await google_llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+                answer_text = getattr(ai_response, "content", str(ai_response))
+            else:
+                logger.warning("[rag] Google API Key not found, skipping backup.")
+        except Exception as e_google:
+             logger.error(f"[rag] ❌ Google LLM also failed: {e_google}")
+
+    # --- 3. แผน C (สุดท้าย): ถ้า Google ก็พังอีก (หรือโหมด Table บังคับ) ---
+    # ถ้ายังไม่ได้คำตอบ หรือ ได้คำตอบว่างเปล่า
+    if not answer_text:
         
-        if not has_table_code and found_table_ids:
-            logger.info(f"[rag] Table Mode: AI didn't return table code. Forcing top table.")
-            # เอาตารางแรกที่เจอ (Rank 1) มาแสดงเลย
-            forced_table_id = found_table_ids[0]
-            answer_text = f"พบข้อมูลในตารางครับ:\n\n[SHOW_TABLE:TBL_{forced_table_id}]"
+        # [Fail-safe] ถ้าเป็นโหมด Table แล้วเราเจอ ID ตารางในขั้นตอน Search (found_table_ids มีค่า)
+        # เราจะปล่อยให้เป็นค่าว่าง "" เพื่อให้ Code Override ด้านล่าง (Section 5) ทำงานดึงตารางมาโชว์เอง
+        if mode == "table" and found_table_ids:
+             answer_text = "" 
+        else:
+             # ถ้าเป็นโหมดทั่วไป ให้ยอมแพ้แล้วแสดง Raw Fallback (ข้อมูลดิบ)
+             logger.warning("[rag] ⚠️ All LLMs failed. Using Raw Fallback.")
+             return {
+                 "answer": _generate_fallback_answer(docs, "System Error"), 
+                 "sources": [], 
+                 "intent": intent, 
+                 "mode": f"{mode}+error"
+             }
 
     # --- 5) Regex Replacement ---
     if (table_map or table_cat_map) and answer_text:

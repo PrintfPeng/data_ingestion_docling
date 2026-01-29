@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from .services.logger import append_log, read_logs
 from .services.rag import answer_question
 
+from .services.vector_store import reset_vector_store_cache
+
 
 # -----------------------------------------------------------
 # FastAPI app & Static frontend
@@ -34,6 +36,7 @@ app.mount(
     name="frontend",
 )
 
+app.mount("/ingested", StaticFiles(directory="ingested"), name="ingested")
 # โฟลเดอร์สำหรับอัปโหลดไฟล์ PDF ใหม่
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -121,7 +124,7 @@ async def ask(req: AskRequest):
     answer_text = result.get("answer", "")
     sources = result.get("sources", [])
     
-    # หา Tag ทั้งหมด เช่น [SHOW_TABLE:CAT=สว.]
+    # หา Tag ทั้งหมดในคำตอบ
     table_tags = re.findall(r"\[SHOW_TABLE:CAT=(.*?)\]", answer_text)
 
     for category_key in table_tags:
@@ -319,7 +322,7 @@ async def upload_pdf(
             status_code=500,
             detail=f"re-index error (ingest_doc): {e}",
         ) from e
-
+    reset_vector_store_cache()
     return {
         "ok": True,
         "doc_id": safe_doc_id, # Return normalized ID

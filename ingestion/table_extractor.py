@@ -410,7 +410,6 @@ def _summarize_table(client: OpenAI, markdown_table: str, is_html: bool = False)
         f"ข้อมูล:\n{truncated}"
     )
     try:
-        # [CHANGE] ใส่ try-except และ timeout
         response = client.chat.completions.create(
             model=TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
@@ -418,7 +417,13 @@ def _summarize_table(client: OpenAI, markdown_table: str, is_html: bool = False)
             temperature=0.1,
             timeout=60.0
         )
-        return response.choices[0].message.content.strip()
+        summary = response.choices[0].message.content.strip()
+        
+        # [🔥 แก้ตรงนี้] เพิ่ม Sleep 15 วินาที กัน Error 429
+        print("   💤 Summarized. Cooling down API for 15s...")
+        time.sleep(15) 
+        
+        return summary
     except Exception as e:
         print(f"[table_extractor] Summarization failed: {e}")
         return ""
@@ -487,7 +492,6 @@ def _extract_table_with_vision(client: OpenAI, image: Image.Image) -> str:
     try:
         b64_image = _pil_image_to_base64(image)
         
-        # [CHANGE] เพิ่ม Timeout และ try-except ให้ชัดเจน
         response = client.chat.completions.create(
             model=VISION_MODEL,
             messages=[
@@ -503,9 +507,14 @@ def _extract_table_with_vision(client: OpenAI, image: Image.Image) -> str:
                 }
             ],
             max_tokens=2000,
-            timeout=DEFAULT_TIMEOUT # Vision ใช้เวลานาน
+            timeout=DEFAULT_TIMEOUT
         )
         html = response.choices[0].message.content.replace("```html", "").replace("```", "").strip()
+        
+        # [🔥 แก้ตรงนี้] เพิ่ม Sleep 15 วินาที หลังงาน Vision
+        print("   💤 Vision extracted. Cooling down API for 15s...")
+        time.sleep(15)
+
         return html if "<table" in html else ""
     except Exception as e:
         print(f"[table_extractor] Vision extraction failed: {e}")
@@ -686,7 +695,7 @@ def extract_tables(
                             "parser_version": PARSER_VERSION
                         },
                     ))
-                    time.sleep(1)
+                    
 
         except Exception as e:
             print(f"[table_extractor] Vision failed: {e}. Fallback...")
@@ -738,7 +747,7 @@ def extract_tables(
                 
                 if llm_client:
                     summary = _summarize_table(llm_client, markdown, is_html=False)
-                    time.sleep(0.5)
+                    
                     cat = _classify_category_with_llm(llm_client, f"{header_txt} {' '.join(columns)}")
                 
                 table_id = f"tbl_{doc_id}_{t.page:03d}_{global_table_counter:04d}"

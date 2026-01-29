@@ -5,7 +5,7 @@ image_extractor.py
 
 หน้าที่:
 - เปิดไฟล์ PDF
-- ดึงรูปภาพทุกภาพในเอกสาร
+- ดึงรูปภาพทุกภาพในเอกสาร (ใช้ Docling)
 - บันทึกลงโฟลเดอร์ (เช่น ingested/{doc_id}/images/img_001_001.png)
 - [NEW] ใช้ Custom Vision Model (Qwen-VL) อ่านภาพและสร้าง Caption
 - แปลงผลลัพธ์เป็น list[ImageBlock] ตาม schema
@@ -16,12 +16,14 @@ import base64
 from pathlib import Path
 from typing import List, Optional
 
-import fitz  # PyMuPDF
-# [CHANGE] ใช้ OpenAI Client สำหรับ Custom API
+# [CHANGE] เลิกใช้ fitz ในการดึงรูป (แต่ใช้ Docling แทน)
+# import fitz  <-- ลบทิ้งได้เลย หรือ comment ไว้
 from openai import OpenAI
 from PIL import Image
 
 from .schema import ImageBlock
+# [NEW] เรียกใช้ Class Docling ที่เราเพิ่งสร้าง
+from .docling_parser import DoclingImageParser
 
 from dotenv import load_dotenv
 import os
@@ -29,11 +31,10 @@ import os
 load_dotenv()
 
 # [CHANGE] เลือกโมเดลที่เหมาะสมที่สุดสำหรับงาน Vision จากลิสต์
-# qwen2.5-vl-32b-instruct เป็นโมเดล Vision-Language ที่เก่งมาก
 VISION_MODEL_NAME = "qwen/qwen2.5-vl-32b-instruct"
 
 # -------------------------------------------------------------------
-# Helper: Vision API
+# Helper: Vision API (คงเดิม ไม่แตะต้อง)
 # -------------------------------------------------------------------
 
 def _get_vision_client() -> tuple[Optional[OpenAI], Optional[str]]:
@@ -61,7 +62,7 @@ def _encode_image(image_path: Path) -> str:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 def _generate_image_caption(client: OpenAI, model_name: str, image_path: Path) -> str:
-    """ส่งรูปไปให้ AI อธิบาย (Captioning)"""
+    """ส่งรูปไปให้ AI อธิบาย (Captioning) - ฟังก์ชันเดิมที่ทำงานดีอยู่แล้ว"""
     if not client:
         return ""
 
@@ -102,7 +103,7 @@ def _generate_image_caption(client: OpenAI, model_name: str, image_path: Path) -
         return ""
 
 # -------------------------------------------------------------------
-# Main Extraction
+# Main Extraction (ส่วนที่แก้ไข Logic การดึงรูป)
 # -------------------------------------------------------------------
 
 def extract_images(
@@ -111,87 +112,71 @@ def extract_images(
     output_root: str | Path = "ingested",
 ) -> List[ImageBlock]:
     """
-    ดึงรูปภาพทั้งหมดจาก PDF และสร้าง Caption ด้วย AI
+    ดึงรูปภาพทั้งหมดจาก PDF (ใช้ Docling) และสร้าง Caption ด้วย AI
     """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"PDF file not found: {path}")
 
+    # กำหนดโฟลเดอร์ปลายทาง: ingested/{doc_id}/images
     output_root = Path(output_root)
     image_dir = output_root / doc_id / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    # Init AI Model
+    # Init AI Model (เหมือนเดิม)
     client, model_name = _get_vision_client()
 
-    pdf_doc = fitz.open(path)
     image_blocks: List[ImageBlock] = []
 
-    try:
-        image_counter = 0
+    # ----------------------------------------------------
+    # [MODIFIED] ใช้ Docling แทน fitz
+    # ----------------------------------------------------
+    print(f"[image_extractor] Starting Docling extraction for {doc_id}...")
+    parser = DoclingImageParser()
+    
+    # Docling จะจัดการเรื่องการวนลูปหน้าและเซฟไฟล์ให้เราเองในขั้นตอนนี้
+    extracted_data = parser.extract_images(str(path), str(image_dir))
+    
+    # วนลูปข้อมูลรูปที่ได้จาก Docling
+    for i, item in enumerate(extracted_data):
+        file_path_on_disk = Path(item["file_path"])
+        filename = item["filename"]
+        page_number = item["page"]
+        bbox = item["bbox"] # ได้ BBox แม่นยำกว่าเดิม
+        
+        # สร้าง ID
+        img_id = f"img_{doc_id}_{i+1:04d}"
+        
+        # [KEEP] AI Captioning Logic เดิม (สำคัญมาก)
+        caption_text = ""
+        if client:
+            print(f"[image_extractor] Generating caption for {filename} using {model_name}...")
+            caption_text = _generate_image_caption(client, model_name, file_path_on_disk)
+            
+            # [KEEP] ใส่ delay กัน Rate Limit ตามที่คุณต้องการ (15s)
+            print("   💤 Cooling down API for 15s...") 
+            time.sleep(15)
 
-        # loop ทุกหน้า
-        for page_index in range(pdf_doc.page_count):
-            page = pdf_doc[page_index]
-            page_number = page_index + 1
+        # สร้าง Object ImageBlock ตาม Schema เดิม
+        image_block = ImageBlock(
+            id=img_id,
+            doc_id=doc_id,
+            page=page_number,
+            file_path=str(file_path_on_disk), # Path สำหรับให้ Backend/Frontend เรียกใช้
+            caption=caption_text, 
+            section=None,
+            category="figure", # Docling ส่วนใหญ่ดึง Figure ออกมา
+            bbox=bbox,
+            extra={
+                "source": "docling",
+                "original_filename": filename,
+                "ai_captioned": bool(caption_text)
+            },
+        )
+        image_blocks.append(image_block)
 
-            # get_images(full=True) คืน list ของ image objects ในหน้านั้น
-            images = page.get_images(full=True)
-
-            for img_index, img in enumerate(images, start=1):
-                xref = img[0]  # image reference id ใน PDF
-                base_image = pdf_doc.extract_image(xref)
-
-                img_bytes: bytes = base_image["image"]
-                img_ext: str = base_image.get("ext", "png")
-                width: int = base_image.get("width", 0)
-                height: int = base_image.get("height", 0)
-
-                # กรองรูปที่เล็กเกินไป (มักเป็น icon/line/noise)
-                if width < 50 or height < 50:
-                    continue
-
-                image_counter += 1
-                img_id = f"img_{image_counter:04d}"
-
-                # ตั้งชื่อไฟล์ เช่น img_p001_001.png
-                filename = f"img_p{page_number:03d}_{img_index:03d}.{img_ext}"
-                file_path_on_disk = image_dir / filename
-
-                # เซฟรูปลงดิสก์
-                with open(file_path_on_disk, "wb") as f:
-                    f.write(img_bytes)
-                
-                # [NEW] AI Captioning
-                caption_text = ""
-                if client:
-                    print(f"[image_extractor] Generating caption for {filename} using {model_name}...")
-                    caption_text = _generate_image_caption(client, model_name, file_path_on_disk)
-                    # ใส่ delay นิดหน่อยกัน Rate Limit (ถ้าจำเป็น)
-                    time.sleep(1.0) 
-
-                image_block = ImageBlock(
-                    id=img_id,
-                    doc_id=doc_id,
-                    page=page_number,
-                    file_path=str(file_path_on_disk),
-                    caption=caption_text, # ใส่ผลลัพธ์จาก AI ลงไปตรงนี้!
-                    section=None,
-                    category=None,
-                    bbox=None,
-                    extra={
-                        "width": width,
-                        "height": height,
-                        "xref": xref,
-                        "ai_captioned": bool(caption_text)
-                    },
-                )
-                image_blocks.append(image_block)
-
-        return image_blocks
-
-    finally:
-        pdf_doc.close()
+    print(f"[image_extractor] Processed {len(image_blocks)} images for {doc_id}.")
+    return image_blocks
 
 
 if __name__ == "__main__":

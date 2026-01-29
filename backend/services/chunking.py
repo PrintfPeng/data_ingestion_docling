@@ -626,7 +626,13 @@ def image_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
         item_doc_type = item.doc_type or "manual"
         semantic_meta = _extract_intent_and_entities(content, "Image")
 
-        formatted_content = f"🖼️ [{item.page or '?'}] {content}"
+        clean_path = str(item.file_path or "").replace("\\", "/")
+        formatted_content = (
+            f"🖼️ [Image Info]\n"
+            f"Path: {clean_path}\n"
+            f"Page: {item.page or '?'}\n"
+            f"Description: {content}"
+        )
 
         chunks.append(
             Chunk(
