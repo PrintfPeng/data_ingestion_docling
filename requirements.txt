@@ -1,18 +1,28 @@
-pymupdf
-camelot-py
-pandas
-opencv-python
-google-generativeai
-python-dotenv
-PyMuPDF
-Pillow
+# --- Core Web & API ---
 fastapi
 uvicorn[standard]
-pydantic
+python-multipart
+requests
 python-dotenv
-chromadb
+
+# --- Data Handling ---
+pandas
+pydantic
+
+# --- AI & LLM ---
+openai
 langchain
 langchain-community
+langchain-core
+langchain-openai
 langchain-google-genai
-python-multipart
+google-generativeai
+sentence-transformers
+chromadb
+
+# --- PDF & Image Processing ---
+pymupdf
+camelot-py
+opencv-python
 Pillow
+docling

@@ -1,345 +1,253 @@
 from __future__ import annotations
 
 """
-document_classifier.py
+document_classifier.py (Final Universal Edition)
 
 หน้าที่:
-- จำแนกประเภทเอกสารจากข้อความ text blocks และชื่อไฟล์
-- รองรับ 2 โหมด:
-    1) Rule-based (ไม่ใช้โมเดล)
-    2) LLM-based (ใช้โมเดล Qwen/OpenAI Compatible)
+- จำแนกประเภทเอกสารจากข้อความและชื่อไฟล์ (ครอบคลุมหลากหลายประเภท)
+- รองรับ 3 โหมดทำงาน (Hybrid Fallback System):
+    1) OpenRouter (AI ฉลาดสุด) -> ถ้าพังไปข้อ 2
+    2) Google Gemini (AI สำรอง ฟรี/เร็ว) -> ถ้าพังไปข้อ 3
+    3) Rule-based (Keyword Matching) -> กันตาย
 
-ขั้นตอน:
-- อ่าน TextBlock
-- รวมข้อความบางส่วน (sample_text)
-- Rule-based → ถ้าดูไม่ออก
-- ถ้า use_llm=True → ใช้ LLM ช่วย classify
+Updated Categories:
+- Finance: invoice, receipt, financial_statement, tax_form
+- Legal/Admin: contract, government_doc, id_card
+- Work/HR: resume, meeting_minutes, project_plan
+- Knowledge: manual, research_paper, educational
+- General: correspondence, generic
 """
 
 from typing import List, Optional
 from dotenv import load_dotenv
 import os
+import re
 
 load_dotenv()
 
 from ingestion.schema import IngestedDocument, TextBlock, DocumentMetadata
 
 # -------------------------
-# Document Label Set
+# Client Imports (Safe Load)
+# -------------------------
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+try:
+    import google.generativeai as genai
+    HAS_GOOGLE = True
+except ImportError:
+    HAS_GOOGLE = False
+
+# -------------------------
+# Document Label Set (Universal)
 # -------------------------
 CANDIDATE_TYPES = [
-    "bank_statement",
-    "invoice",
-    "receipt",
-    "purchase_order",
-    "delivery_note",
-    "tax_form",
-    "qna",          # เพิ่ม type สำหรับเอกสารแนวถาม-ตอบ / แบบฝึกหัด
-    "generic",
+    # Finance
+    "invoice",              # ใบแจ้งหนี้
+    "receipt",              # ใบเสร็จรับเงิน
+    "financial_statement",  # งบการเงิน / Bank Statement
+    "tax_form",             # ภาษี
+    
+    # Legal & Official
+    "contract",             # สัญญา / ข้อตกลง
+    "government_doc",       # หนังสือราชการ / ประกาศ
+    "id_card",              # บัตรประชาชน / Passport
+    
+    # Work & HR
+    "resume",               # เรซูเม่ / CV
+    "meeting_minutes",      # บันทึกการประชุม
+    "project_plan",         # แผนงาน / TOR
+    
+    # Knowledge & Tech
+    "manual",               # คู่มือ / Technical Spec
+    "research_paper",       # งานวิจัย / บทความวิชาการ
+    "educational",          # สื่อการสอน / ข้อสอบ / แบบฝึกหัด
+    
+    # General
+    "correspondence",       # จดหมาย / อีเมล / บันทึกข้อความ
+    "generic",              # ทั่วไป
 ]
 
 # -------------------------
-# [CHANGE] LLM Model Config
+# Model Config
 # -------------------------
-# ใช้โมเดล Qwen ตามที่ต้องการ
 PRIMARY_MODEL = os.getenv("CUSTOM_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
 
 # -------------------------
-# HELPER FUNCTION
+# HELPER: Client Managers
 # -------------------------
 
+def _get_openai_client() -> Optional[OpenAI]:
+    """สร้าง Client สำหรับ OpenRouter"""
+    api_key = os.getenv("CUSTOM_API_KEY")
+    base_url = os.getenv("CUSTOM_API_BASE")
+    if not api_key: return None
+    # Check library import
+    if OpenAI is None: return None
+    try:
+        return OpenAI(api_key=api_key, base_url=base_url, timeout=30)
+    except: return None
+
+def _get_google_client():
+    """สร้าง Client สำหรับ Google Gemini"""
+    if not HAS_GOOGLE: return None
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key: return None
+    try:
+        genai.configure(api_key=api_key)
+        # ใช้โมเดล Flash เพราะฟรีและเร็ว
+        return genai.GenerativeModel('gemini-2.5-flash')
+    except: return None
+
+# -------------------------
+# HELPER: Text Sampling
+# -------------------------
 
 def _collect_sample_text(texts: List[TextBlock], max_chars: int = 4000) -> str:
-    """รวม text block แรก ๆ เอามาเป็น sample text สำหรับ rule/LLM"""
+    """รวม text block แรก ๆ เอามาเป็น sample text"""
     chunks = []
-    total = 0
-    for t in texts:
-        if not t.content:
-            continue
-        if total + len(t.content) > max_chars:
-            break
-        chunks.append(t.content)
-        total += len(t.content)
-    return "\n".join(chunks)
+    current_len = 0
+    # ดูแค่ 30 บล็อกแรก (เพิ่มจากเดิมเผื่อเอกสารยาว)
+    for t in texts[:30]: 
+        s = (t.content or "").strip()
+        if not s: continue
+        chunks.append(s)
+        current_len += len(s)
+        if current_len >= max_chars: break
+    return "\n".join(chunks)[:max_chars]
 
-
-def _get_custom_api_config() -> tuple[Optional[str], Optional[str]]:
-    """
-    [CHANGE] ดึง API KEY และ BASE URL สำหรับ Custom API
-    """
-    api_key = os.getenv("CUSTOM_API_KEY")
-    api_base = os.getenv("CUSTOM_API_BASE")
-    
-    if api_key:
-        prefix = api_key[:5] + "..."
-        print(f"[document_classifier] Custom API Key prefix: {prefix}")
-    else:
-        print("[document_classifier] Custom API Key NOT found")
-        
-    return api_key, api_base
-
-
-# ============================================================
-# 1) RULE-BASED CLASSIFIER (พื้นฐาน)
-# ============================================================
-
+# -------------------------
+# LOGIC: Rule-based (Universal)
+# -------------------------
 
 def classify_document_rule_based(doc: IngestedDocument) -> str:
-    """จำแนกเอกสารแบบง่าย ๆ ไม่ใช้ AI"""
-    file_name = (doc.metadata.file_name or "").lower()
-    sample = _collect_sample_text(doc.texts).lower()
+    """
+    ใช้ Keyword พื้นฐานแยกประเภท (Fallback ชั้นสุดท้าย)
+    รองรับทั้งไทยและอังกฤษ
+    """
+    text = _collect_sample_text(doc.texts).lower()
+    fname = (doc.metadata.filename or "").lower()
+    combined = f"{fname} {text}"
 
-    # ------------------------
-    # 1) Q&A / แบบฝึกหัด / ข้อสอบ
-    # ------------------------
-    # ใช้ทั้งจากชื่อไฟล์ + เนื้อหา
-    if any(k in file_name for k in ["qna", "q&a", "qa", "quiz", "exam", "ข้อสอบ", "แบบฝึกหัด"]):
-        return "qna"
+    # 1. Finance
+    if any(k in combined for k in ["invoice", "ใบแจ้งหนี้", "tax invoice"]): return "invoice"
+    if any(k in combined for k in ["receipt", "ใบเสร็จ", "bill"]): return "receipt"
+    if any(k in combined for k in ["statement", "รายการเดินบัญชี", "งบดุล", "balance sheet"]): return "financial_statement"
+    if any(k in combined for k in ["tax", "ภาษี", "ภ.ง.ด", "withholding"]): return "tax_form"
 
-    if ("ถาม:" in sample and "ตอบ:" in sample) or ("คำถาม" in sample and "คำตอบ" in sample):
-        return "qna"
+    # 2. Legal
+    if any(k in combined for k in ["contract", "agreement", "สัญญา", "ข้อตกลง", "mou"]): return "contract"
+    if any(k in combined for k in ["identification", "passport", "บัตรประชาชน", "citizen id"]): return "id_card"
+    if any(k in combined for k in ["official", "ประกาศ", "ระเบียบ", "คำสั่ง", "gazette"]): return "government_doc"
 
-    # ------------------------
-    # 2) rule จากชื่อไฟล์
-    # ------------------------
-    if "statement" in file_name and "bank" in file_name:
-        return "bank_statement"
-
-    if "statement" in file_name and any(k in file_name for k in ["acct", "account", "บัญชี"]):
-        return "bank_statement"
-
-    if "invoice" in file_name:
-        return "invoice"
-
-    if "receipt" in file_name:
-        return "receipt"
-
-    if "po_" in file_name or "purchase_order" in file_name:
-        return "purchase_order"
-
-    if "delivery" in file_name or "dnote" in file_name:
-        return "delivery_note"
-
-    # ------------------------
-    # 3) rule จากเนื้อหา (ภาษาอังกฤษ + ไทย)
-    # ------------------------
-    # bank statement
-    if any(k in sample for k in [
-        "account statement",
-        "statement period",
-        "account number",
-        "เลขที่บัญชี",
-        "ยอดคงเหลือ",
-        "รายการเดินบัญชี",
-        "รายการเคลื่อนไหวบัญชี",
-    ]):
-        return "bank_statement"
-
-    # invoice
-    if any(k in sample for k in [
-        "invoice no",
-        "tax invoice",
-        "เลขที่ใบกำกับภาษี",
-        "เลขที่ใบแจ้งหนี้",
-    ]):
-        return "invoice"
-
-    # receipt
-    if any(k in sample for k in [
-        "receipt no",
-        "official receipt",
-        "thank you for your payment",
-        "ใบเสร็จรับเงิน",
-    ]):
-        return "receipt"
-
-    # purchase order
-    if any(k in sample for k in [
-        "purchase order",
-        "ใบสั่งซื้อ",
-    ]):
-        return "purchase_order"
-
-    # delivery note
-    if any(k in sample for k in [
-        "delivery note",
-        "ใบส่งของ",
-        "ใบส่งสินค้า",
-    ]):
-        return "delivery_note"
-
-    # tax form
-    if any(k in sample for k in [
-        "tax form",
-        "withholding tax",
-        "หนังสือรับรองการหักภาษี ณ ที่จ่าย",
-    ]):
-        return "tax_form"
-
-    # Q&A อีกที (สำรอง)
-    if "ถาม:" in sample and "ตอบ:" in sample:
-        return "qna"
+    # 3. Work
+    if any(k in combined for k in ["resume", "cv", "curriculum vitae", "ประวัติย่อ", "experience"]): return "resume"
+    if any(k in combined for k in ["minutes", "บันทึกการประชุม", "agenda", "วาระ"]): return "meeting_minutes"
+    
+    # 4. Knowledge
+    if any(k in combined for k in ["manual", "guide", "handbook", "คู่มือ", "instruction", "spec"]): return "manual"
+    if any(k in combined for k in ["abstract", "introduction", "methodology", "บทคัดย่อ", "วิจัย"]): return "research_paper"
+    if any(k in combined for k in ["exam", "test", "quiz", "ข้อสอบ", "แบบฝึกหัด", "lesson"]): return "educational"
 
     return "generic"
 
+# -------------------------
+# LOGIC: Hybrid LLM Classification
+# -------------------------
 
-# ============================================================
-# 2) LLM-BASED CLASSIFIER (Custom API)
-# ============================================================
-
-
-def classify_document_with_llm(
-    doc: IngestedDocument,
-    model_name: Optional[str] = None,
-) -> str:
+def classify_document_with_llm(doc: IngestedDocument) -> str:
     """
-    [CHANGE] ใช้ Custom LLM (Qwen) จำแนกประเภทเอกสาร
-    - ใช้โมเดล fix (PRIMARY_MODEL) ถ้าไม่กำหนด
-    - ถ้า error / ไม่มี KEY → fallback rule-based
+    Hybrid Classification: OpenRouter -> Google -> Rule-based
     """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        print("[document_classifier] openai library not installed -> fallback rule-based")
-        return classify_document_rule_based(doc)
+    sample_text = _collect_sample_text(doc.texts)
+    # ถ้าไม่มี Text เลย ให้ใช้ Rule-based (ซึ่งจะดูชื่อไฟล์แทน)
+    if not sample_text: return classify_document_rule_based(doc)
 
-    api_key, api_base = _get_custom_api_config()
-    if not api_key or not api_base:
-        print("[document_classifier] No Custom API Config → fallback rule-based")
-        return classify_document_rule_based(doc)
+    filename = doc.metadata.filename or ""
+    
+    prompt = (
+        f"Analyze this document content and filename.\n"
+        f"Filename: {filename}\n"
+        f"Content Sample (First 4000 chars):\n{sample_text}\n\n"
+        f"Classify into exactly one of these types:\n"
+        f"{', '.join(CANDIDATE_TYPES)}\n\n"
+        f"Guidelines:\n"
+        f"- 'contract': Legal agreements, MOUs\n"
+        f"- 'manual': User guides, technical specs, handbooks\n"
+        f"- 'research_paper': Academic papers, journals\n"
+        f"- 'correspondence': Letters, emails, memos\n"
+        f"- 'generic': If unsure or general text\n"
+        f"\nReply ONLY with the type name (lowercase snake_case)."
+    )
 
-    try:
-        client = OpenAI(
-            api_key=api_key,
-            base_url=api_base
-        )
-    except Exception as e:
-        print(f"[document_classifier] OpenAI Client init failed: {e}")
-        return classify_document_rule_based(doc)
+    # 1. แผน A: OpenRouter (Primary)
+    client = _get_openai_client()
+    if client:
+        try:
+            res = client.chat.completions.create(
+                model=PRIMARY_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=50, temperature=0.0
+            )
+            t = res.choices[0].message.content.strip().lower()
+            t = re.sub(r"[^a-z_]", "", t)
+            if t in CANDIDATE_TYPES: return t
+        except Exception as e:
+            print(f"[classifier] OpenRouter failed: {e}")
 
-    # เลือก model
-    if model_name is None:
-        model_name = PRIMARY_MODEL
+    # 2. แผน B: Google Gemini (Fallback)
+    google = _get_google_client()
+    if google:
+        try:
+            print("[classifier] 🔄 Using Google Fallback...")
+            res = google.generate_content(prompt)
+            t = res.text.strip().lower()
+            t = re.sub(r"[^a-z_]", "", t)
+            if t in CANDIDATE_TYPES: return t
+        except Exception as e:
+            print(f"[classifier] Google failed: {e}")
 
-    # เตรียมข้อความ
-    sample_text = _collect_sample_text(doc.texts, max_chars=4000)
+    # 3. แผน C: Rule-based (กันตาย)
+    print("[classifier] AI failed, falling back to rules.")
+    return classify_document_rule_based(doc)
 
-    prompt = f"""
-คุณเป็นตัวช่วยจำแนกประเภทไฟล์เอกสาร (PDF) ภาษาไทยและอังกฤษ
-
-ให้จำแนกเอกสารด้านล่างนี้เป็น "ประเภทเดียว" จากลิสต์นี้เท่านั้น (ตอบเป็นภาษาอังกฤษ, ใช้ label ด้านล่างตรง ๆ):
-
-{CANDIDATE_TYPES}
-
-คำอธิบายแบบย่อ:
-- bank_statement  = รายการเดินบัญชีธนาคาร / statement ธนาคาร
-- invoice         = ใบแจ้งหนี้ / ใบกำกับภาษีขาย
-- receipt         = ใบเสร็จรับเงิน
-- purchase_order  = ใบสั่งซื้อ
-- delivery_note   = ใบส่งของ / ใบส่งสินค้า
-- tax_form        = แบบฟอร์มภาษี / หนังสือรับรองการหักภาษี ฯลฯ
-- qna             = เอกสารที่เป็นชุดคำถาม–คำตอบ, ข้อสอบ, แบบฝึกหัด (มักมีรูปแบบ "ถาม:" และ "ตอบ:")
-- generic         = เอกสารทั่วไปที่ไม่เข้าข้อไหนชัดเจน
-
-File name: {doc.metadata.file_name}
-
-ตัวอย่างข้อความจากเอกสาร:
-\"\"\"{sample_text}\"\"\"
-
-ให้ตอบแค่ชื่อ label เดียวจากลิสต์ด้านบน เช่น:
-bank_statement
-หรือ
-qna
-หรือ
-generic
-"""
-
-    try:
-        print(f"[document_classifier] Using Custom model: {model_name}")
-        
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": "You are a helpful document classifier."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,
-            max_tokens=50
-        )
-        
-        answer = response.choices[0].message.content or ""
-        answer = answer.strip().lower()
-        print("[document_classifier] LLM raw answer:", answer)
-
-        # normalize
-        answer = answer.replace("label:", "").strip()
-        answer = answer.splitlines()[0].strip() if answer else ""
-
-        # mappingแบบหยาบกันหลุด
-        if "bank" in answer and "statement" in answer:
-            return "bank_statement"
-        if "invoice" in answer:
-            return "invoice"
-        if "receipt" in answer:
-            return "receipt"
-        if "purchase" in answer:
-            return "purchase_order"
-        if "delivery" in answer:
-            return "delivery_note"
-        if "tax" in answer:
-            return "tax_form"
-        if "qna" in answer or "q&a" in answer or "qa" in answer or "question" in answer:
-            return "qna"
-
-        # ถ้าโมเดลตอบมาหนึ่งใน label อยู่แล้วก็ใช้เลย
-        for lbl in CANDIDATE_TYPES:
-            if lbl in answer:
-                return lbl
-
-        # ไม่เข้าอะไรเลย → generic
-        return "generic"
-
-    except Exception as e:
-        print(f"[document_classifier] LLM classify failed: {e}")
-        # Fallback to rule-based
-        return classify_document_rule_based(doc)
-
-
-# ============================================================
+# -------------------------
 # PUBLIC ENTRYPOINT
-# ============================================================
-
+# -------------------------
 
 def classify_document(doc: IngestedDocument, use_llm: bool = True) -> str:
     """
-    เลือกว่าจะใช้ rule-based หรือ LLM
+    Entrypoint หลักสำหรับเรียกใช้งานจากภายนอก
     """
-    # กันกรณีไม่มี text เลย ยังให้ได้ type กลับไป (มักจะ generic)
+    # ถ้าเอกสารว่างเปล่า (ไม่มี text) ให้ใช้ rule ดูชื่อไฟล์
     if not doc.texts:
         return classify_document_rule_based(doc)
 
+    # ถ้าสั่งปิด LLM ให้ใช้ rule
     if not use_llm:
         return classify_document_rule_based(doc)
 
-    # พยายามใช้ LLM ก่อน
+    # ปกติใช้ Hybrid LLM
     return classify_document_with_llm(doc)
 
-
-# ============================================================
-# CLI TEST
-# ============================================================
+# -------------------------
+# CLI TEST (สำหรับรันเทสไฟล์นี้เดี่ยวๆ)
+# -------------------------
 
 if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    # ทดสอบโหลดจาก ingested/sample (ต้องมีไฟล์ก่อน)
+    # path สมมติสำหรับการเทส
     root = Path("ingested") / "sample"
     meta_path = root / "metadata.json"
     text_path = root / "text.json"
 
     if not meta_path.exists() or not text_path.exists():
-        print("Please run ingestion first: ingested/sample/metadata.json + text.json not found.")
+        print("Test files not found. Please run ingestion first.")
     else:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         texts = json.loads(text_path.read_text(encoding="utf-8"))
@@ -351,5 +259,8 @@ if __name__ == "__main__":
             images=[],
         )
 
-        print("Rule-based:", classify_document(doc, use_llm=False))
-        print("LLM-based:", classify_document(doc, use_llm=True))
+        print("-" * 50)
+        print(f"File: {doc.metadata.filename}")
+        print("-" * 50)
+        print("Rule-based Result:", classify_document_rule_based(doc))
+        print("AI Result (Hybrid):", classify_document(doc, use_llm=True))

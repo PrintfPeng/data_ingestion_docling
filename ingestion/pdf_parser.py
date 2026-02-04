@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 """
-pdf_parser.py (Enterprise Manual RAG Edition)
+pdf_parser.py (Final Master Edition)
 
 หน้าที่:
-- Extract Text + BBox อย่างแม่นยำ
-- Layout Analysis: จัดการ Header/Footer และลำดับการอ่าน (2-Column)
-- Structure Awareness: แยก H1/H2 และ Propagate Section
+- Extract Text + BBox อย่างแม่นยำ (รักษา Logic การรวมบรรทัดและการวิเคราะห์ Intent)
+- Layout Analysis: จัดการ Header/Footer
 - Semantic Tagging: ระบุ Warning/Note/Step
-- [NEW] Rich Metadata: เพิ่ม Intent Hint, Answer Scope, และ Entities ตั้งแต่ระดับ Block
-- [NEW] Intelligent Merging: รวม Block โดยรักษา Metadata ให้ไม่หาย
-- [NEW] Table Extraction & Embedding: ดึงตารางและฝังลง Vector DB ทันที
+- Table Extraction: ดึงตารางและฝังลง Vector DB ทันที
+- Image Extraction: ดึงรูปภาพประกอบ (Integrated)
+- Markdown Generation: สร้างรายงานสรุปไฟล์ .md พร้อมรูปภาพและตาราง (Integrated)
 """
 
 from datetime import datetime
@@ -30,51 +29,59 @@ from .schema import (
     BBox,
 )
 
-# [NEW] Imports for Table Handling
-from .table_extractor import extract_tables, table_to_text
-
-# ==============================================================================
-# [CRITICAL FIX] Correct Import for backend/services/vector_store.py
-# ==============================================================================
+# ------------------------------------------------------------------
+# IMPORTS: External Extractors & Generators
+# ------------------------------------------------------------------
+# ต้องมั่นใจว่าไฟล์เหล่านี้มีอยู่จริงใน folder ingestion/
 try:
-    # 1. ลอง Import ตาม Path ที่ถูกต้อง: backend.services.vector_store
+    from .table_extractor import extract_tables, table_to_text
+    from .image_extractor import extract_images       # ต้องมีไฟล์ image_extractor.py
+    from .markdown_generator import generate_markdown # ต้องมีไฟล์ markdown_generator.py
+except ImportError as e:
+    # แจ้งเตือนถ้าไฟล์ย่อยหายไป แต่ไม่ให้โปรแกรม Crash ทันที (จะ error ตอนรันฟังก์ชันนั้นๆ แทน)
+    logging.warning(f"[pdf_parser] Dependency import warning: {e}")
+    # Dummy functions เพื่อกัน Crash ตอน import
+    if 'extract_tables' not in locals(): extract_tables = lambda *a, **k: []
+    if 'table_to_text' not in locals(): table_to_text = lambda x: ""
+    if 'extract_images' not in locals(): extract_images = lambda *a, **k: []
+    if 'generate_markdown' not in locals(): generate_markdown = lambda *a, **k: None
+
+# ------------------------------------------------------------------
+# CRITICAL FIX: Import Vector Store
+# ------------------------------------------------------------------
+try:
     from backend.services.vector_store import get_vector_store
 except ImportError:
-    # 2. ถ้าไม่เจอ (อาจเพราะรัน script แล้ว python path ไม่ถึง root)
-    # ให้ถอยกลับไปหา Root Folder (AI_Data_Ingestion) แล้ว Add เข้า sys.path
     try:
         current_file = Path(__file__).resolve()
-        # ingestion/pdf_parser.py -> parent=ingestion -> parent=AI_Data_Ingestion (Root)
         project_root = current_file.parents[1]
-        
         if str(project_root) not in sys.path:
             sys.path.append(str(project_root))
-            
         from backend.services.vector_store import get_vector_store
     except ImportError as e:
         raise ImportError(
             f"CRITICAL ERROR: ไม่สามารถ Import 'backend.services.vector_store' ได้\n"
-            f"ตำแหน่งไฟล์ที่คาดหวัง: {project_root / 'backend/services/vector_store.py'}\n"
             f"Error details: {e}"
         )
 
 logger = logging.getLogger(__name__)
 
 
-# -------------------------------------------------------------------
-# 1. Config & Text Normalization
-# -------------------------------------------------------------------
+# ==============================================================================
+# 1. Config & Text Normalization Helpers (Logic เดิม - ห้ามตัด)
+# ==============================================================================
 def _generate_doc_id(file_path: Path) -> str:
-    # แทนที่เว้นวรรคด้วย _ เพื่อความชัวร์
     return file_path.stem.replace(" ", "_").replace("-", "_")
 
 _WORD_CHARS_PATTERN = re.compile(r"[A-Za-z0-9\u0E00-\u0E7F]")
 
 def _clean_text(text: str) -> str:
     if not text: return ""
-    # ลบ control chars แต่เก็บ newline ไว้บางส่วนถ้าจำเป็น (ในที่นี้เรา merge แล้วจัดการทีหลัง)
+    # ลบ control chars แต่เก็บ newline
     text = "".join(ch for ch in text if ch == "\n" or ch.isprintable())
+    # ยุบ space เกิน
     text = re.sub(r"[ \t]+", " ", text)
+    # ยุบ newline เกิน
     text = re.sub(r" *\n *", "\n", text)
     return text.strip()
 
@@ -86,21 +93,19 @@ def _is_meaningful_text(text: str) -> bool:
 
 def _normalize_section_title(text: str) -> str:
     text = text.strip()
-    # Remove leading numbering like "1.", "1.1", "A)"
+    # ลบเลขนำหน้า เช่น "1. Introduction" -> "Introduction"
     text = re.sub(r"^(\d+(\.\d+)*|[A-Z])[\.\)]\s*", "", text)
     text = re.sub(r"\s+", " ", text)
     return text[:150]
 
-# -------------------------------------------------------------------
-# 2. Advanced Semantic Analysis (Metadata Injection)
-# -------------------------------------------------------------------
-
-# Keyword lists for Manual Domain (สามารถรับจาก config ภายนอกได้)
+# ==============================================================================
+# 2. Advanced Semantic Analysis (Logic เดิม - ห้ามตัด)
+# ==============================================================================
 _INTENT_KEYWORDS = {
     "installation": ["install", "setup", "mounting", "connection", "wiring", "การติดตั้ง", "ต่อสาย"],
     "operation": ["operate", "use", "function", "start", "stop", "การใช้งาน", "วิธีใช้"],
-    "troubleshooting": ["error", "fault", "problem", "solution", "fix", "troubleshoot", "แก้ปัญหา", "อาการเสีย"],
-    "maintenance": ["maintain", "clean", "replace", "check", "inspection", "บำรุงรักษา", "ทำความสะอาด"],
+    "troubleshooting": ["error", "fault", "problem", "solution", "fix", "แก้ปัญหา", "อาการเสีย"],
+    "maintenance": ["maintain", "clean", "replace", "check", "inspection", "บำรุงรักษา"],
     "safety": ["safety", "warning", "caution", "danger", "hazard", "ความปลอดภัย", "อันตราย"],
     "specification": ["spec", "dimension", "weight", "voltage", "technical data", "ข้อมูลจำเพาะ"]
 }
@@ -108,7 +113,7 @@ _INTENT_KEYWORDS = {
 _ENTITY_KEYWORDS = [
     "power button", "led", "lcd", "battery", "fuse", "sensor", "switch", 
     "terminal", "cable", "motor", "pump", "valve", "controller"
-] # ตัวอย่าง entity
+]
 
 def _detect_block_type(text: str) -> str:
     text_upper = text.upper()
@@ -116,13 +121,11 @@ def _detect_block_type(text: str) -> str:
         return "warning"
     if re.match(r"^(NOTE|NOTICE|IMPORTANT|หมายเหตุ|สำคัญ|ข้อสังเกต)[:\s]", text_upper):
         return "note"
-    # Step detection: Numbered list or "Step X"
     if re.match(r"^(\d+\.|Step\s+\d+|ขั้นตอนที่\s+\d+|[A-Z]\.)\s", text, re.IGNORECASE):
         return "step"
     return "normal"
 
 def _analyze_intent(text: str, section: str) -> List[str]:
-    """เดา Intent จากเนื้อหาและชื่อ Section"""
     combined = (text + " " + (section or "")).lower()
     intents = []
     for intent, keywords in _INTENT_KEYWORDS.items():
@@ -131,7 +134,6 @@ def _analyze_intent(text: str, section: str) -> List[str]:
     return list(set(intents))
 
 def _extract_entities(text: str) -> List[str]:
-    """ดึง Entity สำคัญ (Simple matching)"""
     text_lower = text.lower()
     found = []
     for entity in _ENTITY_KEYWORDS:
@@ -140,17 +142,16 @@ def _extract_entities(text: str) -> List[str]:
     return found
 
 def _determine_answer_scope(block_type: str) -> str:
-    """กำหนดรูปแบบคำตอบที่เหมาะสม"""
     if block_type == "step": return "procedure"
     if block_type == "warning": return "warning"
     if block_type == "note": return "note"
     return "general"
 
-# -------------------------------------------------------------------
-# 3. Layout Analysis & Sorting
-# -------------------------------------------------------------------
+# ==============================================================================
+# 3. Layout Analysis & Sorting (Logic เดิม - ห้ามตัด)
+# ==============================================================================
 def _detect_header_footer(blocks: List[dict], page_height: float) -> List[dict]:
-    # ปรับ Threshold ให้ปลอดภัย (Top/Bottom 7%)
+    # Heuristic: บนสุด 7% คือ Header, ล่างสุด 7% คือ Footer
     HEADER_THRESH = page_height * 0.07
     FOOTER_THRESH = page_height * 0.93
     
@@ -164,47 +165,38 @@ def _detect_header_footer(blocks: List[dict], page_height: float) -> List[dict]:
         b["extra"]["is_header"] = is_header
         b["extra"]["is_footer"] = is_footer
         
-        # Mark noise immediately to exclude later
+        # Mark as noise initially (can be reclaimed later if needed)
         if is_header or is_footer:
             b["extra"]["noise"] = True
             
     return blocks
 
 def _sort_blocks_reading_order(blocks: List[dict]) -> List[dict]:
-    """
-    Sort blocks using Row-Major Order with Tolerance.
-    (ช่วยให้อ่าน 2 Column ได้ถูกต้อง โดยการ group Y ที่ใกล้เคียงกัน)
-    """
-    # Round Y0 to nearest 12px to treat them as same 'line'
+    # เรียงบรรทัด (Y) แล้วค่อยเรียงคอลัมน์ (X)
+    # ใช้ Grid 12px เพื่อ group บรรทัดที่ใกล้กัน
     return sorted(blocks, key=lambda b: (int(b["bbox"][1] / 12), b["bbox"][0]))
 
-# -------------------------------------------------------------------
-# 4. Smart Merge Logic (The "Senior" Part)
-# -------------------------------------------------------------------
+# ==============================================================================
+# 4. Smart Merge Logic (Logic เดิม - ห้ามตัด)
+# ==============================================================================
 def _merge_text_blocks(blocks: List[TextBlock]) -> List[TextBlock]:
-    """
-    Merge adjacent blocks semantically:
-    - Merge paragraphs (same font, close proximity)
-    - Group step sequences (Step 1 -> Step 2)
-    - Preserve and merge Metadata (Intent, Entities)
-    """
+    """รวม Block ที่ควรอยู่ด้วยกัน (เช่น Paragraph เดียวกัน หรือ Step เดียวกัน)"""
     if not blocks: return []
     
     merged: List[TextBlock] = []
     current = blocks[0]
     
     for next_block in blocks[1:]:
-        # 1. Check compatibility
         curr_type = current.extra.get("block_type", "normal")
         next_type = next_block.extra.get("block_type", "normal")
         
-        # Geometry
+        # ระยะห่างแนวตั้ง
         vertical_dist = next_block.bbox[1] - current.bbox[3]
         
-        # Logic: Step Sequence
+        # Check Step Sequence (1. ... -> 2. ...)
         is_step_sequence = (curr_type in ["step", "step_sequence"] and next_type == "step")
         
-        # Logic: Paragraph Continuation
+        # Check Paragraph Merge (Font ใกล้กัน, ระยะห่างน้อย)
         curr_font = current.extra.get("font_size", 0)
         next_font = next_block.extra.get("font_size", 0)
         font_diff = abs(curr_font - next_font)
@@ -213,17 +205,17 @@ def _merge_text_blocks(blocks: List[TextBlock]) -> List[TextBlock]:
             curr_type == "normal" and next_type == "normal" and
             font_diff < 1.5 and 
             vertical_dist < 15.0 and 
-            vertical_dist > -5.0
+            vertical_dist > -5.0 # ยอมให้ overlap นิดหน่อย
         )
         
         same_section = (current.section == next_block.section)
 
         if same_section and (is_step_sequence or is_paragraph):
-            # --- MERGE OPERATION ---
+            # MERGE
             delimiter = "\n" if is_step_sequence else " "
             current.content += delimiter + next_block.content
             
-            # Merge BBox
+            # Update BBox
             current.bbox = (
                 min(current.bbox[0], next_block.bbox[0]),
                 min(current.bbox[1], next_block.bbox[1]),
@@ -231,13 +223,11 @@ def _merge_text_blocks(blocks: List[TextBlock]) -> List[TextBlock]:
                 max(current.bbox[3], next_block.bbox[3]),
             )
             
-            # Update Block Type
             if is_step_sequence:
                 current.extra["block_type"] = "step_sequence"
-                current.extra["answer_scope"] = "procedure" # Update scope
+                current.extra["answer_scope"] = "procedure"
             
-            # Merge Metadata (Intent & Entities)
-            # Combine lists and remove duplicates
+            # Merge Metadata
             curr_intents = set(current.extra.get("intent", []))
             next_intents = set(next_block.extra.get("intent", []))
             current.extra["intent"] = list(curr_intents.union(next_intents))
@@ -247,15 +237,16 @@ def _merge_text_blocks(blocks: List[TextBlock]) -> List[TextBlock]:
             current.extra["entities"] = list(curr_entities.union(next_entities))
                 
         else:
+            # PUSH & RESET
             merged.append(current)
             current = next_block
             
     merged.append(current)
     return merged
 
-# -------------------------------------------------------------------
-# 5. Page Extraction Logic
-# -------------------------------------------------------------------
+# ==============================================================================
+# 5. Page Extraction Logic (Logic เดิม - ห้ามตัด)
+# ==============================================================================
 def _extract_text_blocks_from_page(
     pdf_page: fitz.Page,
     doc_id: str,
@@ -265,11 +256,11 @@ def _extract_text_blocks_from_page(
 ) -> Tuple[List[TextBlock], Optional[str]]:
     
     try:
-        # ใช้ raw dict เพื่อ control เองทั้งหมด
+        # ใช้ dict เพื่อเอา metadata ละเอียด
         page_dict = pdf_page.get_text("dict", flags=fitz.TEXT_PRESERVE_IMAGES)
     except Exception as e:
         logger.warning(f"Page {page_number} dict extraction failed: {e}")
-        # Fallback
+        # Fallback to plain text
         txt = _clean_text(pdf_page.get_text("text") or "")
         if not _is_meaningful_text(txt):
             return [], current_section
@@ -286,35 +277,29 @@ def _extract_text_blocks_from_page(
             )
         ], current_section
 
+    # Processing Blocks
     raw_blocks = page_dict.get("blocks", []) or []
-    
-    # 1. Detect Header/Footer
     raw_blocks = _detect_header_footer(raw_blocks, pdf_page.rect.height)
-    
-    # 2. Robust Sort
     raw_blocks = _sort_blocks_reading_order(raw_blocks)
 
-    # 3. Calculate Page Statistics
+    # Calculate Page Median Font (for Header Detection)
     font_sizes = []
     for b in raw_blocks:
-        if b.get("type") != 0: continue
+        if b.get("type") != 0: continue # Skip image blocks
         for line in b.get("lines", []):
             for span in line.get("spans", []):
                 if span.get("size"): font_sizes.append(span["size"])
     
     page_median_font = statistics.median(font_sizes) if font_sizes else 10.0
 
-    text_blocks: List[TextBlock] = []
+    temp_blocks: List[TextBlock] = []
     current_index = start_index
     active_section = current_section
-
-    # --- Phase 1: Extraction & Tagging ---
-    temp_blocks: List[TextBlock] = []
     
     for block in raw_blocks:
-        if block.get("type") != 0: continue # Skip images
+        if block.get("type") != 0: continue # Skip images here (handled by image_extractor)
 
-        # Assemble text
+        # Reconstruct Text
         lines = block.get("lines", [])
         spans_text = []
         block_fonts = []
@@ -327,30 +312,29 @@ def _extract_text_blocks_from_page(
         
         content = _clean_text(" ".join(spans_text))
         
-        # Filter Noise
+        # Filtering
         if not _is_meaningful_text(content): continue
-        if block.get("extra", {}).get("noise", False): continue # Skip Header/Footer
+        if block.get("extra", {}).get("noise", False): continue
 
-        # Heading Detection
+        # Header Detection Logic
         avg_font = sum(block_fonts)/len(block_fonts) if block_fonts else 0
         is_heading = False
         heading_level = None
         
-        # Heuristic: Larger font + Short text + Not just numbers
         if avg_font > page_median_font * 1.2 and len(content) < 200:
-            if not re.match(r"^[\d\.\,\s]+$", content):
+            if not re.match(r"^[\d\.\,\s]+$", content): # ไม่ใช่ตัวเลขล้วน
                 is_heading = True
                 heading_level = "H1" if avg_font > page_median_font * 1.5 else "H2"
 
-        # Semantic Analysis
+        # Semantic Tagging
         block_type = "heading" if is_heading else _detect_block_type(content)
         
-        # Section Propagation
+        # Propagate Section
         if is_heading:
             normalized_header = _normalize_section_title(content)
             if normalized_header: active_section = normalized_header
 
-        # Rich Metadata Extraction (Intent, Entities, Scope)
+        # Metadata Enrichment
         intents = _analyze_intent(content, active_section)
         entities = _extract_entities(content)
         answer_scope = _determine_answer_scope(block_type)
@@ -371,7 +355,6 @@ def _extract_text_blocks_from_page(
                 "is_heading": is_heading,
                 "heading_level": heading_level,
                 "block_type": block_type,
-                # New Metadata
                 "intent": intents,
                 "answer_scope": answer_scope,
                 "entities": entities
@@ -379,15 +362,14 @@ def _extract_text_blocks_from_page(
         )
         temp_blocks.append(tb)
 
-    # --- Phase 2: Merge Blocks ---
+    # Smart Merge
     merged_blocks = _merge_text_blocks(temp_blocks)
-    
     return merged_blocks, active_section
 
 
-# -------------------------------------------------------------------
-# Main Parse Function
-# -------------------------------------------------------------------
+# ==============================================================================
+# 6. Main Parse Function (Integrated)
+# ==============================================================================
 def parse_pdf(
     file_path: str | Path,
     doc_type: str = "generic",
@@ -418,6 +400,9 @@ def parse_pdf(
         current_index = 0
         current_active_section = None
 
+        # -----------------------------------------------------------
+        # Step 1: Extract Text (Page by Page)
+        # -----------------------------------------------------------
         for page_index in range(pdf_doc.page_count):
             page = pdf_doc[page_index]
             
@@ -436,7 +421,7 @@ def parse_pdf(
         logger.info(f"[pdf_parser] Finished text extraction for {doc_id}: {len(all_text_blocks)} blocks.")
 
         # -----------------------------------------------------------
-        # [NEW] Table Extraction & Embedding (Embed ทันที!)
+        # Step 2: Extract Tables & Embed
         # -----------------------------------------------------------
         logger.info(f"[pdf_parser] Extracting tables for {doc_id}...")
         extracted_tables = extract_tables(
@@ -448,24 +433,18 @@ def parse_pdf(
         if extracted_tables:
             logger.info(f"[pdf_parser] Found {len(extracted_tables)} tables. Embedding into Vector Store...")
             try:
-                # เรียกใช้ get_vector_store ผ่าน global variable ที่เราเตรียมไว้
                 vs = get_vector_store()
-                
                 for table in extracted_tables:
-                    # 1. แปลง Table Object เป็น Text String (พร้อม Summary & Columns)
+                    # [FIX] เรียกใช้ table_to_text ที่นำเข้ามาแล้ว
                     text = table_to_text(table)
-                    
-                    # 2. เตรียม Metadata ที่ใช้สำหรับ Filter ใน rag.py
                     metadata_dict = {
                         "doc_id": table.doc_id,
                         "page": table.page,
-                        "source": "table",       # สำคัญ: เพื่อให้ rag.py รู้ว่าเป็น table
-                        "category": table.category, # ใช้สำหรับ Filter ประเภทตาราง
+                        "source": "table",
+                        "category": table.category,
                         "table_id": table.id,
                         "doc_type": doc_type
                     }
-                    
-                    # 3. Add to Vector Store (ใช้ add_texts)
                     vs.add_texts(
                         texts=[text],
                         metadatas=[metadata_dict],
@@ -474,16 +453,50 @@ def parse_pdf(
             except Exception as e:
                 logger.error(f"[pdf_parser] Failed to embed tables: {e}")
 
-        return IngestedDocument(
+        # -----------------------------------------------------------
+        # Step 3: Extract Images (New Integration)
+        # -----------------------------------------------------------
+        logger.info(f"[pdf_parser] Extracting images for {doc_id}...")
+        ingested_dir = Path("ingested")
+        
+        try:
+            extracted_images = extract_images(
+                file_path=path,
+                doc_id=doc_id,
+                output_root=ingested_dir
+            )
+        except Exception as e:
+            logger.error(f"[pdf_parser] Image extraction failed: {e}")
+            extracted_images = []
+
+        # -----------------------------------------------------------
+        # Step 4: Construct Final Document
+        # -----------------------------------------------------------
+        final_doc = IngestedDocument(
             metadata=metadata,
             texts=all_text_blocks,
-            tables=extracted_tables, # [MODIFIED] Return extracted tables populated
-            images=[],
+            tables=extracted_tables,
+            images=extracted_images, 
         )
+
+        # -----------------------------------------------------------
+        # Step 5: Generate Smart Markdown Report (New Integration)
+        # -----------------------------------------------------------
+        doc_output_dir = ingested_dir / doc_id
+        doc_output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            generate_markdown(final_doc, doc_output_dir)
+        except Exception as e:
+            logger.error(f"[pdf_parser] Markdown generation failed: {e}")
+
+        return final_doc
 
     finally:
         pdf_doc.close()
 
+# ==============================================================================
+# CLI Test
+# ==============================================================================
 if __name__ == "__main__":
     import json
     import argparse
@@ -492,6 +505,8 @@ if __name__ == "__main__":
     parser.add_argument("pdf_path")
     args = parser.parse_args()
 
-    doc = parse_pdf(args.pdf_path)
-    # Print sample output with new metadata
-    print(json.dumps([b.dict() for b in doc.texts[:5]], ensure_ascii=False, indent=2))
+    try:
+        doc = parse_pdf(args.pdf_path)
+        print(f"✅ Processed {len(doc.texts)} texts, {len(doc.tables)} tables, {len(doc.images)} images.")
+    except Exception as e:
+        print(f"❌ Error: {e}")

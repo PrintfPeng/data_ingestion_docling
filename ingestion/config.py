@@ -14,6 +14,8 @@ CUSTOM_API_BASE = os.getenv("CUSTOM_API_BASE")
 # ตั้งค่าโมเดลเริ่มต้นเป็น qwen/qwen-2.5-72b-instruct
 CUSTOM_MODEL_NAME = os.getenv("CUSTOM_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
 
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
 # --- OCR API Configuration ---
 # URL จาก Swagger
 OCR_API_URL = os.getenv("OCR_API_URL", "https://111.223.37.41:9001")

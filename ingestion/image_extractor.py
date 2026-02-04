@@ -1,109 +1,142 @@
 from __future__ import annotations
 
 """
-image_extractor.py
+image_extractor.py (Hybrid Edition)
 
 หน้าที่:
 - เปิดไฟล์ PDF
 - ดึงรูปภาพทุกภาพในเอกสาร (ใช้ Docling)
-- บันทึกลงโฟลเดอร์ (เช่น ingested/{doc_id}/images/img_001_001.png)
-- [NEW] ใช้ Custom Vision Model (Qwen-VL) อ่านภาพและสร้าง Caption
+- [NEW] ระบบ AI 3 ชั้น (OpenRouter -> Google -> Local)
 - แปลงผลลัพธ์เป็น list[ImageBlock] ตาม schema
 """
 
 import time
 import base64
+import os
 from pathlib import Path
 from typing import List, Optional
 
-# [CHANGE] เลิกใช้ fitz ในการดึงรูป (แต่ใช้ Docling แทน)
-# import fitz  <-- ลบทิ้งได้เลย หรือ comment ไว้
 from openai import OpenAI
 from PIL import Image
+from dotenv import load_dotenv
 
 from .schema import ImageBlock
-# [NEW] เรียกใช้ Class Docling ที่เราเพิ่งสร้าง
+# [KEEP] ใช้ Docling เหมือนเดิม
 from .docling_parser import DoclingImageParser
 
-from dotenv import load_dotenv
-import os
+# [NEW] Import Google GenAI (สำหรับแผนสำรอง)
+try:
+    import google.generativeai as genai
+    HAS_GOOGLE = True
+except ImportError:
+    HAS_GOOGLE = False
 
 load_dotenv()
 
-# [CHANGE] เลือกโมเดลที่เหมาะสมที่สุดสำหรับงาน Vision จากลิสต์
+# Config
 VISION_MODEL_NAME = "qwen/qwen2.5-vl-32b-instruct"
 
 # -------------------------------------------------------------------
-# Helper: Vision API (คงเดิม ไม่แตะต้อง)
+# Helper: AI Clients & Encoding
 # -------------------------------------------------------------------
 
-def _get_vision_client() -> tuple[Optional[OpenAI], Optional[str]]:
-    """เตรียม OpenAI Client สำหรับงาน Vision"""
+def _get_openai_client() -> tuple[Optional[OpenAI], Optional[str]]:
+    """เตรียม OpenAI Client (OpenRouter)"""
     api_key = os.getenv("CUSTOM_API_KEY")
     base_url = os.getenv("CUSTOM_API_BASE")
-
-    if not api_key:
-        print("[image_extractor] Warning: No CUSTOM_API_KEY. Image captioning will be skipped.")
-        return None, None
-
+    if not api_key: return None, None
     try:
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        client = OpenAI(api_key=api_key, base_url=base_url)
         return client, VISION_MODEL_NAME
-    except Exception as e:
-        print(f"[image_extractor] Failed to init OpenAI Client: {e}")
-        return None, None
+    except: return None, None
+
+def _get_google_client():
+    """เตรียม Google Gemini Client"""
+    if not HAS_GOOGLE: return None
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key: return None
+    try:
+        genai.configure(api_key=api_key)
+        # ใช้โมเดล Flash เพราะฟรีและเร็ว
+        return genai.GenerativeModel('gemini-2.5-flash')
+    except: return None
 
 def _encode_image(image_path: Path) -> str:
     """แปลงไฟล์รูปเป็น Base64"""
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
-def _generate_image_caption(client: OpenAI, model_name: str, image_path: Path) -> str:
-    """ส่งรูปไปให้ AI อธิบาย (Captioning) - ฟังก์ชันเดิมที่ทำงานดีอยู่แล้ว"""
-    if not client:
-        return ""
+# -------------------------------------------------------------------
+# Logic: Generate Caption (Hybrid Fallback System)
+# -------------------------------------------------------------------
 
-    try:
-        # Encode รูปเป็น Base64
-        base64_image = _encode_image(image_path)
-        
-        prompt = (
-            "อธิบายรูปภาพนี้โดยละเอียด: "
-            "1. ถ้าเป็นกราฟ/แผนภูมิ ให้บอกชื่อแกน ตัวเลขสำคัญ และแนวโน้ม "
-            "2. ถ้าเป็นรูปถ่าย/ไดอะแกรม ให้บอกว่าคืออะไรและมีองค์ประกอบสำคัญอะไรบ้าง "
-            "3. ถ้ามีข้อความในภาพ ให้อ่านและสรุปข้อความนั้นมาด้วย "
-            "ตอบเป็นภาษาไทย กระชับและได้ใจความ"
-        )
+def _generate_caption_hybrid(image_path: Path) -> str:
+    """
+    ระบบสร้างคำบรรยายภาพแบบ 3 ชั้น:
+    1. OpenRouter (Qwen) -> ถ้าได้ พัก 15 วิ
+    2. Google Gemini     -> ถ้าได้ พัก 2 วิ
+    3. Empty String      -> (Local Fallback)
+    """
+    prompt = (
+        "อธิบายรูปภาพนี้โดยละเอียด: "
+        "1. ถ้าเป็นกราฟ/แผนภูมิ ให้บอกชื่อแกน ตัวเลขสำคัญ และแนวโน้ม "
+        "2. ถ้าเป็นรูปถ่าย/ไดอะแกรม ให้บอกว่าคืออะไรและมีองค์ประกอบสำคัญอะไรบ้าง "
+        "3. ถ้ามีข้อความในภาพ ให้อ่านและสรุปข้อความนั้นมาด้วย "
+        "ตอบเป็นภาษาไทย กระชับและได้ใจความ"
+    )
 
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            max_tokens=300,
-        )
-        
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"[image_extractor] Caption generation failed for {image_path.name}: {e}")
-        return ""
+    # --- PLAN A: OpenRouter (Qwen) ---
+    openai_client, model_name = _get_openai_client()
+    if openai_client:
+        try:
+            # print(f"   [AI] Trying Plan A: {model_name}...")
+            base64_image = _encode_image(image_path)
+            response = openai_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
+                        ],
+                    }
+                ],
+                max_tokens=300,
+                timeout=60
+            )
+            caption = response.choices[0].message.content.strip()
+            
+            # [LOGIC] ถ้าใช้ OpenRouter สำเร็จ ให้พักยาว (15s) ตามกฎ Rate Limit
+            print("   💤 Cooling down Plan A (15s)...")
+            time.sleep(15)
+            return caption
+            
+        except Exception as e:
+            print(f"   ⚠️ Plan A (OpenRouter) failed: {e}")
+
+    # --- PLAN B: Google Gemini ---
+    google_model = _get_google_client()
+    if google_model:
+        try:
+            print(f"   [AI] 🔄 Switching to Plan B: Google Gemini...")
+            img = Image.open(image_path)
+            response = google_model.generate_content([prompt, img])
+            caption = response.text.strip()
+            
+            # [LOGIC] Google เร็วและฟรี พักนิดเดียวพอ (2s)
+            time.sleep(2)
+            return caption
+            
+        except Exception as e:
+            print(f"   ⚠️ Plan B (Google) failed: {e}")
+
+    # --- PLAN C: Local (ยอมแพ้) ---
+    print("   [AI] ❌ All AI failed. Skipping caption.")
+    return ""
 
 # -------------------------------------------------------------------
-# Main Extraction (ส่วนที่แก้ไข Logic การดึงรูป)
+# Main Extraction
 # -------------------------------------------------------------------
 
 def extract_images(
@@ -112,65 +145,51 @@ def extract_images(
     output_root: str | Path = "ingested",
 ) -> List[ImageBlock]:
     """
-    ดึงรูปภาพทั้งหมดจาก PDF (ใช้ Docling) และสร้าง Caption ด้วย AI
+    ดึงรูปภาพ (Docling) + สร้าง Caption (Hybrid AI)
     """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"PDF file not found: {path}")
 
-    # กำหนดโฟลเดอร์ปลายทาง: ingested/{doc_id}/images
+    # กำหนดโฟลเดอร์ปลายทาง
     output_root = Path(output_root)
     image_dir = output_root / doc_id / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    # Init AI Model (เหมือนเดิม)
-    client, model_name = _get_vision_client()
-
-    image_blocks: List[ImageBlock] = []
-
-    # ----------------------------------------------------
-    # [MODIFIED] ใช้ Docling แทน fitz
-    # ----------------------------------------------------
+    # 1. ใช้ Docling ดึงรูป (ส่วนเดิม ไม่แก้)
     print(f"[image_extractor] Starting Docling extraction for {doc_id}...")
     parser = DoclingImageParser()
-    
-    # Docling จะจัดการเรื่องการวนลูปหน้าและเซฟไฟล์ให้เราเองในขั้นตอนนี้
     extracted_data = parser.extract_images(str(path), str(image_dir))
     
-    # วนลูปข้อมูลรูปที่ได้จาก Docling
+    image_blocks: List[ImageBlock] = []
+
+    # 2. วนลูปรูปที่ได้
     for i, item in enumerate(extracted_data):
         file_path_on_disk = Path(item["file_path"])
         filename = item["filename"]
-        page_number = item["page"]
-        bbox = item["bbox"] # ได้ BBox แม่นยำกว่าเดิม
         
-        # สร้าง ID
         img_id = f"img_{doc_id}_{i+1:04d}"
         
-        # [KEEP] AI Captioning Logic เดิม (สำคัญมาก)
-        caption_text = ""
-        if client:
-            print(f"[image_extractor] Generating caption for {filename} using {model_name}...")
-            caption_text = _generate_image_caption(client, model_name, file_path_on_disk)
-            
-            # [KEEP] ใส่ delay กัน Rate Limit ตามที่คุณต้องการ (15s)
-            print("   💤 Cooling down API for 15s...") 
-            time.sleep(15)
-
-        # สร้าง Object ImageBlock ตาม Schema เดิม
+        # [CHANGE] เรียกใช้ฟังก์ชัน Hybrid แทนของเดิม
+        # ฟังก์ชันนี้จะจัดการเรื่อง Client, Fallback และ Sleep ให้เองข้างใน
+        print(f"[image_extractor] Generating caption for {filename}...")
+        caption_text = _generate_caption_hybrid(file_path_on_disk)
+        
+        # สร้าง Object ImageBlock
         image_block = ImageBlock(
             id=img_id,
             doc_id=doc_id,
-            page=page_number,
-            file_path=str(file_path_on_disk), # Path สำหรับให้ Backend/Frontend เรียกใช้
+            page=item["page"],
+            file_path=str(file_path_on_disk),
             caption=caption_text, 
             section=None,
-            category="figure", # Docling ส่วนใหญ่ดึง Figure ออกมา
-            bbox=bbox,
+            category="figure",
+            bbox=item["bbox"],
             extra={
                 "source": "docling",
                 "original_filename": filename,
-                "ai_captioned": bool(caption_text)
+                "ai_captioned": bool(caption_text),
+                "ai_model": "hybrid"
             },
         )
         image_blocks.append(image_block)
@@ -204,5 +223,5 @@ if __name__ == "__main__":
     )
 
     print(f"Extracted {len(images)} images.")
-    data = [im.to_dict() for im in images]
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    # data = [im.to_dict() for im in images] # ImageBlock might not have to_dict directly depending on schema
+    # print(json.dumps(data, ensure_ascii=False, indent=2))
