@@ -25,11 +25,14 @@
     animation: fadeIn 0.3s ease-out forwards;
 }
 
-/* Glassmorphism */
 .glass-header {
     background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.6);
 }
 .glass-input {
     background: linear-gradient(to top, rgba(248, 250, 252, 1) 0%, rgba(248, 250, 252, 0.9) 60%, rgba(248, 250, 252, 0) 100%);
@@ -88,36 +91,78 @@
     margin-bottom: 0;
 }
 
-/* Table Container Styling (Separated Tables) */
+/* =========================================
+   TABLE STYLING (Modern & Responsive)
+   ========================================= */
+
+/* กรอบรวมตาราง (Container) - ช่วยเรื่อง Scroll แนวนอน */
+.answer-tables-content {
+    display: block;
+    width: 100%;
+    overflow-x: auto; /* ให้เลื่อนซ้ายขวาได้ถ้าตารางกว้างเกินจอ */
+    -webkit-overflow-scrolling: touch; /* ให้เลื่อนลื่นๆ บนมือถือ */
+    margin: 1.5rem 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    background: #ffffff;
+}
+
+/* ตัวตาราง (Table Element) */
 .answer-tables-content table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.875rem;
-    background: white;
-    margin: 0; /* Reset margin inside container */
+    font-size: 0.925rem; /* ขนาดตัวอักษรกำลังดี */
+    min-width: 600px; /* ✅ บังคับความกว้างขั้นต่ำ เพื่อไม่ให้ข้อมูลบีบอัดกันเละ */
 }
 
-.answer-tables-content table th,
-.answer-tables-content table td {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #e2e8f0;
-    text-align: left;
-    vertical-align: top;
-}
-
+/* หัวตาราง (Header) */
 .answer-tables-content table th {
-    background-color: #f1f5f9;
-    font-weight: 600;
-    color: #334155;
-    white-space: nowrap; /* Prevent headers from wrapping too much */
-}
-
-.answer-tables-content table td {
-    color: #475569;
-}
-
-.answer-tables-content table tbody tr:hover {
     background-color: #f8fafc;
+    color: #334155;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 2px solid #e2e8f0;
+    vertical-align: middle;
+    /* ✅ แก้จุดตาย: ให้ตัดบรรทัดได้ ไม่ดันจอพัง */
+    white-space: normal; 
+}
+
+/* เนื้อหาในตาราง (Cells) */
+.answer-tables-content table td {
+    padding: 12px 16px;
+    color: #475569;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: top;
+    line-height: 1.6;
+    /* ให้ตัดคำยาวๆ ได้ เช่น URL หรือรหัส */
+    word-wrap: break-word;
+    max-width: 300px; 
+}
+
+/* แถวสุดท้ายไม่ต้องมีเส้นขอบ */
+.answer-tables-content table tr:last-child td {
+    border-bottom: none;
+}
+
+/* Hover Effect (ไฮไลท์แถวเมื่อเอาเมาส์ชี้) */
+.answer-tables-content table tbody tr:hover {
+    background-color: #f1f5f9;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.answer-content img {
+    display: block; /* แก้บั๊กบรรทัดว่าง */
+    max-width: 100%; /* ให้รูปยืดหดตามจอ */
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    margin: 12px auto; /* จัดกึ่งกลาง */
+    border: 1px solid #e2e8f0;
 }
 
 /* Details/Summary Animation (Collapsible Tables) */

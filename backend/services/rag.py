@@ -652,48 +652,51 @@ async def answer_question(
         logger.error(f"[rag] Context build failed: {e}")
         return {"answer": "เกิดข้อผิดพลาดในการเตรียมข้อมูล", "sources": [], "intent": intent, "mode": mode}
     
-    # [NEW] Strict System Prompt for Table Mode
+    # ------------------------------------------------------------------
+    # PROMPT ENGINEERING: GENIUS EDITION (Text + Table + Image)
+    # ------------------------------------------------------------------
+    
     if mode == "table":
-        # Prompt โหด: บังคับส่งตารางเท่านั้น ห้ามพูดเยอะ
+        # === MODE 1: TABLE EXTRACTION ===
+        # (คงเดิม: เน้นดึงตารางเป๊ะๆ)
         system_prompt = (
-            "คุณเป็น AI ที่ทำหน้าที่ดึง 'ตาราง' จากเอกสารมาแสดงตามคำสั่ง\n"
-            "คำสั่ง:\n"
-            "1. ดูข้อมูลใน CONTEXT ว่ามีตาราง (SOURCE: Table) ที่เกี่ยวข้องกับคำถามหรือไม่\n"
-            "2. ถ้าพบตาราง ให้ตอบด้วยรหัส [SHOW_TABLE:TBL_x] เท่านั้น ห้ามสรุปความ ห้ามอธิบายเพิ่ม\n"
-            "3. ถ้าพบหลายตารางที่เกี่ยวข้องกัน ให้ส่งมาให้ครบ เช่น [SHOW_TABLE:TBL_1] [SHOW_TABLE:TBL_2]\n"
-            "4. ถ้าเป็นคำขอให้แสดงตาราง ให้จัดลำดับความสำคัญที่ตารางก่อนเสมอ\n"
+            "บทบาท: คุณคือระบบ AI อัจฉริยะที่เชี่ยวชาญการสกัดข้อมูลโครงสร้าง (Structured Data Extraction)\n"
+            "ภารกิจ: ค้นหา 'ตาราง' ที่ตรงกับคำถามของผู้ใช้มากที่สุดจาก CONTEXT ที่ให้มา\n"
+            "\n"
+            "ขั้นตอนการทำงาน:\n"
+            "1. สแกนหาข้อมูลที่มีระบุว่าเป็น (SOURCE: Table) หรือ (Type: table)\n"
+            "2. อ่านหัวข้อตาราง (Table Name/Summary) และเนื้อหาภายในเพื่อตรวจสอบความเกี่ยวข้อง\n"
+            "3. การตอบกลับ (Strict Output):\n"
+            "   - ถ้าเจอ: ให้ตอบเฉพาะรหัส [SHOW_TABLE:TBL_x] เท่านั้น (ห้ามพูด ห้ามเกริ่นนำ)\n"
+            "   - ถ้าเจอหลายตารางที่เกี่ยวข้องกัน: ส่งมาให้ครบ เช่น [SHOW_TABLE:TBL_1] [SHOW_TABLE:TBL_2]\n"
+            "   - ถ้าไม่เจอ: ให้ตอบว่า 'NULL'\n"
             "\n"
             f"=== CONTEXT ===\n{context_text}\n==============="
         )
     else:
-        # Prompt ปกติ
+        # === MODE 2: SMART ANALYST (Text + Table + Image Integration) ===
         system_prompt = (
-            "คุณเป็นผู้ช่วยอัจฉริยะ (Smart Assistant) ที่ตอบคำถามจากเอกสารที่กำหนดให้ (Context) เท่านั้น\n"
-            "คำแนะนำ:\n"
-            "1. **วิเคราะห์คำถาม:** จับประเด็นสำคัญว่าผู้ใช้ต้องการทราบอะไร\n"
-            "2. **ค้นหาข้อมูล:** ดูข้อมูลใน Context ว่ามีส่วนไหนที่ตอบคำถามได้บ้าง\n"
-            "   - ⚠️ **สำคัญ:** แหล่งข้อมูลใน Context เรียงตามลำดับความสำคัญแล้ว ให้ความสำคัญกับลำดับต้นๆ ก่อน\n"
-            "3. **สังเคราะห์คำตอบ:** เรียบเรียงคำตอบให้น่าอ่าน เป็นภาษาไทยที่สละสลวย\n"
-            "4. **การแสดงตาราง (ยืดหยุ่น):**\n"
-            "   - [SHOW_TABLE:TBL_x] สำหรับเรียกตารางด้วยเลข (เช่น TBL_1)\n"
-            "   - [SHOW_TABLE:CAT=หมวดหมู่] สำหรับเรียกตารางด้วยหมวด\n"
-            "5. **[สำคัญ] การใช้ข้อมูลจากตาราง:**\n"
-            "   - หากข้อมูลคำตอบอยู่ในส่วนที่เป็น Table (SOURCE Type: Table) **ต้อง** ดึงข้อมูลนั้นมาตอบ อย่าบอกว่าไม่พบข้อมูล\n"
-            "   - ถ้าตารางมีข้อมูลที่ตอบคำถามได้ ให้ตอบฟันธงไปเลย\n"
+            "บทบาท: คุณคือ 'ผู้เชี่ยวชาญด้านเอกสาร' ที่เน้นความถูกต้องของข้อมูลสูงสุด\n"
+            "หน้าที่: ตอบคำถามจาก Context ที่ให้มา โดยเลือกวิธีนำเสนอที่ดีที่สุด\n"
             "\n"
-            "กฎเหล็ก:\n"
-            "- ห้ามตอบนอกเหนือจากข้อมูลที่มีใน Context\n"
-            "- ถ้าไม่พบข้อมูล ให้ตอบว่า 'ไม่พบข้อมูลในเอกสารที่แนบมา'\n"
-            "- ห้ามแต่งเติมข้อมูลเอง (Anti-Hallucination)\n"
+            "🧠 วิธีการเลือกแสดงผล (Decision Logic):\n"
+            "1. **ถ้าเป็น 'ตารางข้อมูล' (Data Table):** เช่น รายรับรายจ่าย, สเปคสินค้า, ตัวเลขเปรียบเทียบ\n"
+            "   - ให้ใช้ Tag: [SHOW_TABLE:TBL_x] (ห้ามวาดตาราง Markdown |...| เองเด็ดขาด! เพราะจะแสดงผลเพี้ยน)\n"
+            "2. **ถ้าเป็น 'แบบฟอร์ม' หรือ 'ตารางซับซ้อน' (Complex Form):** เช่น ใบสมัคร, ใบเสร็จ, เอกสารที่มีช่องกาถูก/ผิด\n"
+            "   - **ห้ามใช้ตาราง** ให้ใช้รูปภาพแทนทันที! โดยหา Path รูปที่ตรงกับหน้านั้น\n"
+            "   - ใช้ Tag: [SHOW_IMAGE: <path_file>]\n"
+            "   - เหตุผล: การแสดงเป็นรูปภาพจะอ่านง่ายและถูกต้องเหมือนต้นฉบับที่สุด\n"
             "\n"
-            "[IMAGE HANDLING]\n"
-            "ถ้าผู้ใช้ถามหารูปภาพ หรือใน Context มีข้อมูลรูปภาพที่เกี่ยวข้อง:\n"
-            "1. มองหาข้อมูลที่ขึ้นต้นด้วย 'Path: ...' ใน Context\n"
-            "2. ตอบโดยใช้ Tag นี้แทรกในคำตอบ: [SHOW_IMAGE: <path_file>]\n"
-            "3. อธิบายว่ารูปนั้นคืออะไร อธิบายให้ผู้ใช้งานเข้าใจง่ายที่สุด\n"
-            "4. ถ้าผู้ใช้ขอหลายๆ รูป ให้ใส่ Tag หลายๆ อันตามที่ขอ\n"      
-            "ตัวอย่าง: 'นี่คือรูปที่คุณต้องการครับ [SHOW_IMAGE: ingested/doc_001/images/img_1.png] รูปนี้เป็นรูป.....'\n"
-            f"=== CONTEXT ===\n{context_text}\n==============="
+            "📋 รูปแบบการตอบ:\n"
+            "1. ตอบคำถามให้ตรงประเด็น\n"
+            "2. แทรกหลักฐาน (Table/Image) ตาม Logic ข้างบน\n"
+            "3. อธิบายข้อมูลในหลักฐานนั้นสั้นๆ\n"
+            "\n"
+            "⚠️ กฎเหล็ก:\n"
+            "1. **ห้ามพิมพ์ตารางด้วยตัวอักษร** (เช่น | ชื่อ | สกุล |) เพราะจะทำให้หน้าเว็บพัง ให้ใช้ Tag [SHOW_...] เท่านั้น\n"
+            "2. ถ้า Context มีทั้ง Table และ Image ของเรื่องเดียวกัน ให้เลือก **Image** เป็นหลักสำหรับแบบฟอร์ม\n"
+            "\n"
+            f"=== DOCUMENT CONTEXT ===\n{context_text}\n========================"
         )
 # -------------------------------------------------------------------
     # 4) Call LLM (Chain of Fallback: OpenRouter -> Google -> Raw)
@@ -761,17 +764,32 @@ async def answer_question(
             
             def replace_match(match):
                 found_id = match.group(1)
-                # Handle TBL_1 format vs 1
+                
+                # ... (ส่วน Clean ID เดิมของคุณ) ...
                 clean_id = found_id.replace("TBL_", "").strip()
-                
-                if clean_id in table_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[clean_id]}</div>\n"
-                
-                if "." in found_id:
-                    simple_id = found_id.split(".")[0]
-                    if simple_id in table_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[simple_id]}</div>\n"
-                if len(table_map) == 1:
+
+                # ดึง HTML ดิบออกมา
+                raw_html = ""
+                if clean_id in table_map:
+                    raw_html = table_map[clean_id]
+                elif "." in found_id and found_id.split(".")[0] in table_map:
+                    raw_html = table_map[found_id.split(".")[0]]
+                elif len(table_map) == 1:
                     first_key = list(table_map.keys())[0]
-                    return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_map[first_key]}</div>\n"
+                    raw_html = table_map[first_key]
+                
+                # ถ้าเจอข้อมูลตาราง ให้ทำการ "ล้างไพ่" (Clean Attributes)
+                if raw_html:
+                    # 1. ลบ attributes เก่าที่ติดมากับ tag table ออกให้หมด (เช่น border="1", width="100%")
+                    # เปลี่ยน <table ...> เป็น <table> เพียวๆ
+                    clean_html = re.sub(r'<table[^>]*>', '<table>', raw_html, flags=re.IGNORECASE)
+                    
+                    # 2. (Optional) ลบ style ใน td/th ด้วยถ้าต้องการ (แต่ปกติแก้ที่ table tag ก็พอแล้ว)
+                    # clean_html = re.sub(r' style="[^"]*"', '', clean_html) 
+
+                    # 3. ส่งกลับพร้อม Wrapper div ที่เราเขียน CSS ดักไว้แล้ว
+                    return f"\n<div class='answer-tables-content'>{clean_html}</div>\n"
+
                 return match.group(0)
 
             pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*(?:TBL[_]?)?\s*([\d\.]+)\]", re.IGNORECASE)
