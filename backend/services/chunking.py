@@ -1,3 +1,5 @@
+# backend/services/chunking.py
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
@@ -431,22 +433,21 @@ def text_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
 
 
 # -------------------------------------------------------------------
-# 2) Table Chunking (SIMPLIFIED - Less Redundancy)
+# 2) Table Chunking (HYBRID INGESTION SUPPORT)
 # -------------------------------------------------------------------
 
-# >>> FINAL TABLE FIX <<<
 def _normalize_table_extra(item: TableItem) -> Dict[str, Any]:
     """
     Normalizes TableItem.extra with fallback priority:
     extra[key] -> item.<attr> -> default
     Ensures safe access to summary, category, markdown, html, role.
+    Also handles 'image_path' and 'is_complex' for Hybrid Ingestion.
     """
     raw_extra = getattr(item, "extra", {}) or {}
     if not isinstance(raw_extra, dict):
         raw_extra = {}
 
     # 1. Summary
-    # Check extra first, then item attribute
     summary = raw_extra.get("summary")
     if not summary and hasattr(item, "summary"):
          summary = getattr(item, "summary", "")
@@ -458,14 +459,12 @@ def _normalize_table_extra(item: TableItem) -> Dict[str, Any]:
     if not category:
         category = "general"
         
-# 3. Markdown (Metadata only)
-    # [FIX] เพิ่มการเช็ค item.markdown (เพราะ table_extractor เก็บไว้ที่ root)
+    # 3. Markdown (Metadata only)
     markdown = raw_extra.get("markdown_content") or raw_extra.get("markdown")
     if not markdown and hasattr(item, "markdown"):
         markdown = getattr(item, "markdown", "")
         
     # 4. HTML (Metadata only)
-    # [FIX] เพิ่มการเช็ค item.html เผื่อไว้
     html = raw_extra.get("html_content") or raw_extra.get("html")
     if not html and hasattr(item, "html"):
         html = getattr(item, "html", "")
@@ -473,12 +472,24 @@ def _normalize_table_extra(item: TableItem) -> Dict[str, Any]:
     # 5. Role
     role = raw_extra.get("role") or getattr(item, "role", None) or ""
 
+    # [ADDED] 6. Hybrid Ingestion Support
+    # Check item attribute first, then extra
+    image_path = getattr(item, "image_path", None)
+    if not image_path:
+        image_path = raw_extra.get("image_path")
+        
+    is_complex = getattr(item, "is_complex", None)
+    if is_complex is None:
+        is_complex = raw_extra.get("is_complex", False)
+
     return {
         "summary": str(summary or "").strip(),
         "category": str(category).strip().lower(),
-        "markdown_content": str(markdown).strip(), # ตอนนี้จะมีข้อมูลแล้ว!
+        "markdown_content": str(markdown).strip(), 
         "html_content": str(html).strip(),
-        "role": str(role).strip().lower()
+        "role": str(role).strip().lower(),
+        "image_path": image_path, # Path to crop image (if complex)
+        "is_complex": bool(is_complex) # Flag
     }
 
 def _generate_table_semantic_rows(table: TableItem) -> str:
@@ -518,11 +529,12 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
     """
     Create ONLY ONE UNIFIED CHUNK per table.
     Fully isolated and deterministic logic.
+    Supports Hybrid Ingestion (Text for search, Image for display).
     """
     chunks: List[Chunk] = []
     
     for item in bundle.tables:
-        # >>> FINAL TABLE FIX: Step 1 - Normalize <<<
+        # Step 1 - Normalize
         norm_extra = _normalize_table_extra(item)
         
         # Extract normalized fields
@@ -531,14 +543,16 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
         role = norm_extra["role"]
         markdown_raw = norm_extra["markdown_content"]
         html_raw = norm_extra["html_content"]
+        image_path = norm_extra["image_path"]
+        is_complex = norm_extra["is_complex"]
         
         item_doc_type = item.doc_type or "manual"
         
-        # >>> FINAL TABLE FIX: Step 2 - Sanitize & Cap Metadata <<<
+        # Step 2 - Sanitize & Cap Metadata
         safe_html = _sanitize_html_content(html_raw)
         safe_markdown = markdown_raw[:2000] # Cap markdown length for metadata
         
-        # >>> FINAL TABLE FIX: Step 3 - Content Construction (Summary + Rows) <<<
+        # Step 3 - Content Construction (Summary + Rows)
         content_parts = []
         
         # 3.1 Header / Name
@@ -563,16 +577,22 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
                  content_parts.append(f"คอลัมน์: {', '.join(cols)}")
         
         # 3.5 Semantic Rows (Priority 2)
+        # Use fallback raw data if no markdown, OR if it's a complex table we still want some text searchability
         semantic_rows = _generate_table_semantic_rows(item)
-        if semantic_rows:
-            content_parts.append(f"\nข้อมูลตาราง:\n{semantic_rows}")
+        
+        # If markdown exists, append it (it's best for LLM)
+        if markdown_raw:
+             # Truncate if super long
+             display_md = markdown_raw if len(markdown_raw) < 1000 else markdown_raw[:1000] + "..."
+             content_parts.append(f"\n[Markdown Data]\n{display_md}")
+        elif semantic_rows:
+            content_parts.append(f"\n[Row Data]\n{semantic_rows}")
         elif not summary:
-            # Fallback if both summary and rows are empty
             content_parts.append("ตารางข้อมูล (ไม่มีรายละเอียด)")
             
         unified_content = "\n".join(content_parts)
         
-        # >>> FINAL TABLE FIX: Step 4 - Safety Truncate <<<
+        # Step 4 - Safety Truncate
         if len(unified_content) > _MAX_CHUNK_CHARS:
              unified_content = unified_content[:_MAX_CHUNK_CHARS - 50] + "\n...[ตัดทอนตาราง]..."
 
@@ -580,7 +600,7 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
         combined_for_intent = f"{item.name or ''}\n{summary}\n{unified_content}"
         semantic_meta = _extract_intent_and_entities(combined_for_intent, category)
 
-        # >>> FINAL TABLE FIX: Step 5 - Metadata Construction <<<
+        # Step 5 - Metadata Construction
         metadata = {
             "table_id": item.id,
             "doc_id": str(item.doc_id),
@@ -593,10 +613,12 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
             "role": role,
             "html_trusted": False,
             "source": "table",
+            "image_path": image_path,     # [CRITICAL] For Frontend Display
+            "is_complex": is_complex,     # [CRITICAL] Flag for Hybrid Logic
             **semantic_meta,
         }
 
-        # >>> FINAL TABLE FIX: Step 6 - One Chunk per Table <<<
+        # Step 6 - One Chunk per Table
         chunks.append(
             Chunk(
                 id=f"{item.doc_id}::table::{item.id}",

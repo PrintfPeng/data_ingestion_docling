@@ -130,8 +130,6 @@ class TextBlock:
             bbox=_safe_bbox(d.get("bbox")),
             extra=_safe_dict(d.get("extra")),
         )
-
-
 # =============================================================================
 # TableBlock
 # =============================================================================
@@ -150,10 +148,10 @@ class TableBlock:
     page: int
     
     # --- Semantic Metadata ---
-    name: Optional[str] = None         # e.g., "Balance Sheet"
-    section: Optional[str] = None      # e.g., "financials"
-    category: Optional[str] = None     # e.g., "financial_table"
-    role: Optional[str] = None         # e.g., "data", "layout", "reference"
+    name: Optional[str] = None        # e.g., "Balance Sheet"
+    section: Optional[str] = None     # e.g., "financials"
+    category: Optional[str] = None    # e.g., "financial_table"
+    role: Optional[str] = None        # e.g., "data", "layout", "reference"
 
     # --- Content (Structured) ---
     # Primary data storage. 'columns' acts as the header.
@@ -163,6 +161,11 @@ class TableBlock:
     # --- Content (Representations) ---
     markdown: Optional[str] = None     # LLM-ready markdown representation
     html_content: Optional[str] = None # HTML representation for UI rendering
+
+    # --- Hybrid Ingestion (Image Support) ---
+    # [ADDED] For complex forms/tables that are better saved as images
+    image_path: Optional[str] = None   # Path to the cropped image file
+    is_complex: bool = False           # Flag to indicate complex form structure
 
     # --- Extraction Metadata (Future Proofing) ---
     source: str = "unknown"            # e.g., "camelot", "vision", "layout_model"
@@ -224,6 +227,7 @@ class TableBlock:
             "name", "section", "category", "role",
             "columns", "rows", "header",
             "markdown", "html_content", 
+            "image_path", "is_complex", # [ADDED] New fields
             "source", "method", "numeric_trust",
             "structured_available", "raw_available", "structure_lossy",
             "bbox", "extra"
@@ -318,6 +322,10 @@ class TableBlock:
             markdown=markdown_val,
             html_content=html_val,
             
+            # [ADDED] Hybrid Ingestion
+            image_path=d.get("image_path"),
+            is_complex=bool(d.get("is_complex", False)),
+            
             source=source_val,
             method=_normalize_str(d.get("method")),
             numeric_trust=numeric_trust_val,
@@ -329,8 +337,6 @@ class TableBlock:
             bbox=_safe_bbox(d.get("bbox")),
             extra=extra_data,
         )
-
-
 # =============================================================================
 # ImageBlock
 # =============================================================================

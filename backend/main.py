@@ -6,29 +6,29 @@ import shutil
 import subprocess
 import sys
 import os
-import re  # [NEW] Import re
+import re
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# Internal services
 from .services.logger import append_log, read_logs
 from .services.rag import answer_question
-
 from .services.vector_store import reset_vector_store_cache
 
 
 # -----------------------------------------------------------
-# FastAPI app & Static frontend
+# FastAPI App Setup
 # -----------------------------------------------------------
 
 app = FastAPI(
     title="AI Data Ingestion Backend",
     description="Backend for DB, Embeddings, RAG, API, and Evaluation",
-    version="0.1.0",
+    version="0.2.0 (Hybrid Supported)",
 )
 
-# เสิร์ฟไฟล์ frontend (index.html + assets) ที่ /app/
+# 1. Mount Frontend (Static Assets)
 frontend_path = Path(__file__).resolve().parents[1] / "frontend"
 app.mount(
     "/app",
@@ -36,21 +36,28 @@ app.mount(
     name="frontend",
 )
 
-app.mount("/ingested", StaticFiles(directory="ingested"), name="ingested")
-# โฟลเดอร์สำหรับอัปโหลดไฟล์ PDF ใหม่
+# 2. [CRITICAL] Mount Ingested Data (Images/Tables)
+# ต้องแน่ใจว่า folder นี้มีอยู่จริง เพื่อกัน error 500 ตอน start app
+ingested_path = Path("ingested")
+ingested_path.mkdir(parents=True, exist_ok=True)
+
+app.mount(
+    "/ingested", 
+    StaticFiles(directory=str(ingested_path)), 
+    name="ingested"
+)
+
+# 3. Upload Directory
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # -----------------------------------------------------------
-# Helper: ID Normalization (CRITICAL FIX)
+# Helper: ID Normalization
 # -----------------------------------------------------------
 def _normalize_id(raw_id: str) -> str:
     """
-    ทำให้ ID เป็นมาตรฐานเดียวกันทั้งระบบ (Backend/Frontend/DB)
-    - เปลี่ยนเป็นตัวพิมพ์เล็ก
-    - แทนที่ช่องว่างด้วย _
-    - ลบอักขระพิเศษ (เก็บ a-z, 0-9, _, - และภาษาไทยไว้)
+    ทำให้ ID เป็นมาตรฐานเดียวกัน (Lowercase, No Spaces, Safe Chars)
     """
     if not raw_id:
         return "unknown_doc"
@@ -61,15 +68,14 @@ def _normalize_id(raw_id: str) -> str:
     # 2. Replace spaces with underscores
     s = re.sub(r"\s+", "_", s)
     
-    # 3. Remove weird chars
-    # [CHANGE] แก้บรรทัดนี้: เพิ่ม \u0E00-\u0E7F เพื่อรองรับภาษาไทย
+    # 3. Remove weird chars (Allow Thai chars \u0E00-\u0E7F)
     s = re.sub(r"[^a-z0-9_\-\u0E00-\u0E7F]", "", s)
     
     return s
 
 
 # -----------------------------------------------------------
-# Health check
+# Health Check
 # -----------------------------------------------------------
 
 @app.get("/health")
@@ -77,12 +83,13 @@ async def health_check():
     return {
         "status": "ok",
         "service": "backend",
-        "version": "0.1.0",
+        "version": "0.2.0",
+        "features": ["hybrid_ingestion", "ocr", "rag"],
     }
 
 
 # -----------------------------------------------------------
-# /ask (RAG + Intent + Logging)
+# /ask (RAG + Hybrid Rendering)
 # -----------------------------------------------------------
 
 class AskRequest(BaseModel):
@@ -97,101 +104,111 @@ class AskResponse(BaseModel):
     sources: List[dict]
     intent: str
     mode: str
-    # [FIX] เพิ่ม field tables เพื่อรองรับ Frontend schema (แม้เราจะ render html ใน text ก็ตาม)
     tables: List[Dict[str, Any]] = []
 
 
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
     
-    # [FIX] Normalize doc_ids before sending to RAG
-    # เพื่อให้ตรงกับตอน Upload (แก้ปัญหา ID Mismatch)
+    # 1. Normalize IDs
     sanitized_doc_ids = None
     if req.doc_ids:
         sanitized_doc_ids = [_normalize_id(did) for did in req.doc_ids if did]
 
-    # 1) เรียก RAG ตอบคำถาม
+    # 2. Call RAG Service
     result = await answer_question(
         query=req.query,
-        doc_ids=sanitized_doc_ids, # Use sanitized IDs
+        doc_ids=sanitized_doc_ids,
         top_k=req.top_k,
         mode=req.mode,
     )
 
     # =================================================================
-    # [FIX] Post-Processing: แปลง Tag [SHOW_TABLE] เป็น HTML
+    # [HYBRID FIX] Post-Processing: Convert [SHOW_TABLE] tags
+    # รองรับทั้ง HTML Table และ Image Table
     # =================================================================
     answer_text = result.get("answer", "")
     sources = result.get("sources", [])
     
-    # หา Tag ทั้งหมดในคำตอบ
+    # regex หา tag [SHOW_TABLE:CAT=...]
     table_tags = re.findall(r"\[SHOW_TABLE:CAT=(.*?)\]", answer_text)
 
     for category_key in table_tags:
         clean_cat = category_key.strip()
-        found_html = ""
+        replacement_html = ""
 
-        # วนหา HTML Content จาก Sources ที่ RAG คืนมา
+        # Scan sources to find matching table/image
         for src in sources:
-            # ตรวจสอบว่าเป็น Table Source หรือไม่
-            # (ต้องดู structure ของ src ว่าเก็บ html_content ไว้ตรงไหน โดยปกติจะอยู่ใน metadata หรือ root keys)
-            # กรณีนี้เราจะพยายามหาจากหลายๆ ที่เพื่อความชัวร์
-            metadata = src.get("metadata", src) # Fallback to src itself if metadata key missing
+            metadata = src.get("metadata", src) # Fallback
             
-            is_table = src.get("source") == "table" or metadata.get("source") == "table"
+            # Check source type
+            is_table_source = src.get("source") == "table" or metadata.get("source") == "table"
+            is_image_source = src.get("source") == "image" or metadata.get("source") == "image"
             
-            if is_table:
-                # ดึง Category และ HTML
+            if is_table_source or is_image_source:
                 src_cat = metadata.get("category", "")
-                src_html = metadata.get("html_content") or metadata.get("extra", {}).get("html_content")
-
-                # Match Category (ถ้า Tag ไม่ระบุ Category ให้ถือว่าเอาตารางแรกที่เจอ)
+                
+                # Match Category (Empty cat matches first table found)
                 if (src_cat == clean_cat) or (clean_cat == ""):
-                    if src_html:
-                        found_html = src_html
+                    
+                    # Case A: Complex Table -> Image
+                    image_path = metadata.get("image_path") or metadata.get("extra", {}).get("image_path")
+                    if image_path:
+                        # Construct Image URL (assuming /ingested/ is mounted)
+                        # image_path มักจะเป็น "images/filename.png"
+                        # ต้องเอา doc_id มาประกอบ path: /ingested/{doc_id}/{image_path}
+                        doc_id = metadata.get("doc_id")
+                        full_img_url = f"/ingested/{doc_id}/{image_path}"
+                        
+                        replacement_html = (
+                            f"<div class='my-4 p-2 border rounded bg-slate-50 text-center'>"
+                            f"<p class='text-xs text-slate-500 mb-1'>Original Form (Complex Layout)</p>"
+                            f"<img src='{full_img_url}' alt='Table Image' "
+                            f"class='max-w-full h-auto rounded shadow-sm mx-auto border' />"
+                            f"</div>"
+                        )
+                        break
+
+                    # Case B: Simple Table -> HTML
+                    html_content = metadata.get("html_content") or metadata.get("extra", {}).get("html_content")
+                    if html_content:
+                        replacement_html = f"<br><div class='table-responsive answer-tables-content'>{html_content}</div><br>"
                         break
         
-        # แทนที่ Tag ในคำตอบ
+        # Replace Tag
         tag_str = f"[SHOW_TABLE:CAT={category_key}]"
-        if found_html:
-            #
-            # แทรก HTML ลงไปใน text (Frontend จะ render ให้เองเพราะมี DOMPurify)
-            replacement = f"<br><div class='table-responsive'>{found_html}</div><br>"
-            answer_text = answer_text.replace(tag_str, replacement)
+        if replacement_html:
+            answer_text = answer_text.replace(tag_str, replacement_html)
         else:
-            # ถ้าหาตารางไม่เจอ ให้ลบ Tag ออกเพื่อความสะอาด
+            # Not found -> Remove tag
             answer_text = answer_text.replace(tag_str, "")
 
-    # อัปเดตคำตอบกลับเข้าไปใน result
+    # Update result
     result["answer"] = answer_text
     # =================================================================
 
-    # 2) เขียน log ลงไฟล์ (กันไม่ให้ทำ API พังถ้า log มีปัญหา)
+    # 3. Logging
     try:
-        append_log(
-            {
-                "query": req.query,
-                "doc_ids": req.doc_ids, # Log original IDs for debugging
-                "sanitized_ids": sanitized_doc_ids,
-                "top_k": req.top_k,
-                "mode": req.mode,
-                "answer": result.get("answer"),
-                "intent": result.get("intent"),
-                "sources": result.get("sources"),
-            }
-        )
-    except Exception as e:  # noqa: BLE001
+        append_log({
+            "query": req.query,
+            "doc_ids": req.doc_ids,
+            "sanitized_ids": sanitized_doc_ids,
+            "top_k": req.top_k,
+            "mode": req.mode,
+            "answer": result.get("answer"),
+            "intent": result.get("intent"),
+            "sources": result.get("sources"),
+        })
+    except Exception as e:
         print(f"[LOG_ERROR] {e!r}")
 
-    # 3) คืนค่าเป็น AskResponse (ตอบตรงตาม schema)
-    # ใส่ tables=[] เพื่อกัน error validation (เพราะ model เราเพิ่ม field นี้)
+    # 4. Return
     result["tables"] = result.get("tables", [])
-    
     return AskResponse(**result)
 
 
 # -----------------------------------------------------------
-# /history  (อ่าน log ย้อนหลัง)
+# /history
 # -----------------------------------------------------------
 
 class HistoryItem(BaseModel):
@@ -205,69 +222,56 @@ class HistoryItem(BaseModel):
 
 @app.get("/history", response_model=List[HistoryItem])
 def get_history(limit: int = 50):
-    """
-    ดึง history Q&A ย้อนหลังใหม่สุดไม่เกิน limit รายการ
-    """
     logs = read_logs(limit=limit)
     items: List[HistoryItem] = []
 
     for e in logs:
-        items.append(
-            HistoryItem(
-                ts=e.get("ts", ""),
-                query=e.get("query", ""),
-                answer=e.get("answer", ""),
-                doc_ids=e.get("doc_ids"),
-                intent=e.get("intent"),
-                mode=e.get("mode"),
-            )
-        )
+        items.append(HistoryItem(
+            ts=e.get("ts", ""),
+            query=e.get("query", ""),
+            answer=e.get("answer", ""),
+            doc_ids=e.get("doc_ids"),
+            intent=e.get("intent"),
+            mode=e.get("mode"),
+        ))
 
     return items
 
 
 # -----------------------------------------------------------
-# /upload  (อัปโหลด PDF -> ingestion -> ingest_doc)
+# /upload
 # -----------------------------------------------------------
 
 @app.post("/upload")
 async def upload_pdf(
     file: UploadFile = File(...),
     doc_id: str = Form(...),
-    # เดิม: doc_type: str = Form("bank_statement")
-    # ใหม่: ให้ปล่อยว่างได้ ถ้าไม่ส่งมาจะ default = "generic_doc"
     doc_type: str = Form(""),
-    # เปิดให้เลือกได้ว่าจะใช้ OCR pipeline หรือไม่
-    # - True  = ใช้ scripts.run_ingestion (มี OCR ช่วยอ่าน)
-    # - False = ใช้ scripts.run_all แบบเดิมที่ Peng เขียนไว้
     use_ocr: bool = Form(True),
 ):
     """
-    1) รับไฟล์ PDF จากผู้ใช้
-    2) เซฟลง uploads/<doc_id>.pdf
-    3) ถ้า use_ocr=True  -> ใช้ scripts.run_ingestion (OCR + ingestion)
-       ถ้า use_ocr=False -> ใช้ scripts.run_all (behavior เดิมทั้งชุด)
-    4) เรียก backend.scripts.ingest_doc เพื่อ re-index vector DB
+    1) Normalize doc_id
+    2) Save PDF
+    3) Run Ingestion (Hybrid Support via run_ingestion.py)
+    4) Re-index (ingest_doc.py)
     """
 
-    # 0) normalize doc_type ให้มีค่าเสมอ
+    # 0. Defaults
     if not doc_type or not doc_type.strip():
         doc_type = "generic_doc"
 
-    # 1) ตรวจไฟล์
+    # 1. Validation
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="รองรับเฉพาะไฟล์ PDF เท่านั้น")
 
     if not doc_id.strip():
         raise HTTPException(status_code=400, detail="ต้องระบุ doc_id")
 
-    # [FIX] Normalize ID ทันทีที่รับมา
-    # นี่คือจุดสำคัญที่สุด: เปลี่ยน "Operation Manual Sharp" -> "operation_manual_sharp"
+    # 2. Normalize ID
     safe_doc_id = _normalize_id(doc_id)
-    
     print(f"[UPLOAD] Received doc_id='{doc_id}' -> normalized='{safe_doc_id}'")
 
-    # 2) เซฟไฟล์ลง uploads/ โดยใช้ safe_doc_id
+    # 3. Save File
     dest_path = UPLOAD_DIR / f"{safe_doc_id}.pdf"
     try:
         with dest_path.open("wb") as f:
@@ -275,92 +279,80 @@ async def upload_pdf(
     finally:
         file.file.close()
 
-    # 3) เรียก ingestion pipeline
+    # 4. Run Ingestion Pipeline
     try:
-        if use_ocr:
-            # ใหม่: pipeline ที่มี OCR ช่วยอ่าน ก่อนทำ text.json / table.json / image.json
-            cmd = [
-                sys.executable,
-                "-m",
-                "scripts.run_ingestion",
-                str(dest_path),
-                "--doc-id",
-                safe_doc_id, # Use sanitized ID
-                "--doc-type",
-                doc_type,
-            ]
-            print(f"[UPLOAD] run with OCR: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-        else:
-            # เดิม: ใช้ run_all ของ Peng ทั้งชุด (ไม่มี OCR)
-            cmd = [
-                sys.executable,
-                "-m",
-                "scripts.run_all",
-                str(dest_path),
-                "--doc-id",
-                safe_doc_id, # Use sanitized ID
-                "--doc-type",
-                doc_type,
-            ]
-            print(f"[UPLOAD] run legacy pipeline (no OCR): {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
+        # Determine script to run
+        # NOTE: เราแนะนำให้ใช้ scripts.run_ingestion เสมอเพราะรองรับ Hybrid Ingestion
+        script_name = "scripts.run_ingestion" if use_ocr else "scripts.run_all"
+        
+        cmd = [
+            sys.executable,
+            "-m",
+            script_name,
+            str(dest_path),
+            "--doc-id", safe_doc_id,
+            "--doc-type", doc_type,
+        ]
+        
+        # scripts.run_ingestion รองรับ --no-ocr ถ้า user ไม่ต้องการ
+        if script_name == "scripts.run_ingestion" and not use_ocr:
+            cmd.append("--no-ocr")
+            
+        print(f"[UPLOAD] Running pipeline: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
 
-    except subprocess.CalledProcessError as e:  # noqa: PERF203
+    except subprocess.CalledProcessError as e:
         raise HTTPException(
             status_code=500,
-            detail=f"ingestion pipeline error: {e}",
+            detail=f"Ingestion pipeline failed: {e}",
         ) from e
 
-    # 4) re-index vector DB (backend.scripts.ingest_doc จะ scan โฟลเดอร์ ingested)
+    # 5. Re-index Vector DB (ingest_doc.py handles Hybrid Metadata)
     try:
         cmd = [sys.executable, "-m", "backend.scripts.ingest_doc"]
-        print(f"[UPLOAD] re-index vector DB: {' '.join(cmd)}")
+        print(f"[UPLOAD] Re-indexing: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:  # noqa: PERF203
+    except subprocess.CalledProcessError as e:
         raise HTTPException(
             status_code=500,
-            detail=f"re-index error (ingest_doc): {e}",
+            detail=f"Re-index failed: {e}",
         ) from e
+
+    # Clear Cache
     reset_vector_store_cache()
+
     return {
         "ok": True,
-        "doc_id": safe_doc_id, # Return normalized ID
+        "doc_id": safe_doc_id,
         "original_doc_id": doc_id,
         "doc_type": doc_type,
-        "use_ocr": use_ocr,
+        "pipeline": "hybrid_ingestion",
     }
 
 
 @app.get("/documents")
 def list_documents():
     """
-    คืนรายชื่อเอกสารทั้งหมดที่มีในโฟลเดอร์ ingested/
-    เพื่อให้ Frontend เอาไปสร้าง Dropdown
+    List all documents in 'ingested' folder
     """
     ingested_root = Path("ingested")
     docs = []
     if ingested_root.exists():
-        # Scan folder names inside 'ingested'
         for item in ingested_root.iterdir():
             if item.is_dir():
-                # [FIX] Return both ID and Display Name
-                # ID = folder name (which is normalized)
-                # Name = folder name (can be improved if we stored mapping, but this is consistent)
                 docs.append({
                     "id": item.name,
-                    "name": item.name
+                    "name": item.name # Can be enhanced if we store display name
                 })
     
-    # Sort for consistency
     docs.sort(key=lambda x: x["name"])
     return {"documents": docs}
 
+
 # -----------------------------------------------------------
-# Root redirect -> /app
+# Root Redirect
 # -----------------------------------------------------------
 
 @app.get("/")
 def root():
-    # redirect ไปหน้า frontend หลัก
     return RedirectResponse(url="/app/index.html")

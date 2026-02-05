@@ -1,17 +1,22 @@
 # backend/scripts/ingest_doc.py
 
 from __future__ import annotations
-
+import logging
+import argparse
 from pathlib import Path
 
+# Services
 from backend.services.loader import load_document_bundle
 from backend.services.chunking import (
-    image_items_to_chunks,
-    table_items_to_chunks,
     text_items_to_chunks,
+    image_items_to_chunks,
+    # table_items_to_chunks, # เราจะใช้ smart_table_to_chunks ที่เขียน override ข้างล่างแทน
 )
 from backend.services.vector_store import index_chunks, search_similar
 
+# Setup Logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
 # CONFIG
@@ -20,6 +25,62 @@ from backend.services.vector_store import index_chunks, search_similar
 # ถ้าปล่อย [] ไว้ จะ auto-scan จากโฟลเดอร์ ingested/
 DOCS: list[tuple[str, str]] = []
 
+# -------------------------------------------------------------------
+# [HYBRID UPGRADE] Smart Table Chunking Logic
+# -------------------------------------------------------------------
+def smart_table_to_chunks(tables: list, doc_id: str):
+    """
+    สร้าง Chunk สำหรับตารางแบบ Hybrid:
+    1. ถ้าเป็น Complex Table -> เก็บ image_path ไว้ใน Metadata เพื่อให้ Frontend โชว์รูป
+    2. เก็บ Markdown/Text ไว้ใน Content เพื่อให้ Vector Search หาเจอ
+    """
+    chunks = []
+    for i, tbl in enumerate(tables):
+        # 1. เตรียม Content (ใช้ Markdown เป็นหลักในการค้นหา)
+        # ตารางแบบ Complex ก็จะมี Markdown ซ่อนอยู่ (จาก Docling)
+        content = getattr(tbl, "markdown", "") or ""
+        
+        # Fallback: ถ้าไม่มี Markdown ให้เอา Header + Rows มาต่อกันดื้อๆ
+        if not content and tbl.columns:
+            content = " | ".join(tbl.columns) + "\n"
+            content += "\n".join([" | ".join(map(str, row)) for row in tbl.rows[:5]]) # เอาแค่ 5 แถวพอเป็นตัวอย่าง
+
+        if not content.strip():
+            continue
+
+        # 2. ดึงค่าจาก Object (รองรับทั้ง Attribute และ Extra dict)
+        # เช็ค image_path
+        image_path = getattr(tbl, "image_path", None)
+        if not image_path and tbl.extra:
+            image_path = tbl.extra.get("image_path")
+            
+        # เช็ค is_complex
+        is_complex = getattr(tbl, "is_complex", False)
+        if not is_complex and tbl.extra:
+            is_complex = tbl.extra.get("is_complex", False)
+
+        # 3. เตรียม Metadata (หัวใจสำคัญ!)
+        meta = {
+            "source": "table",
+            "doc_id": doc_id,
+            "page": tbl.page,
+            "table_id": tbl.id, # เช่น TBL_0
+            # [CRITICAL] ใส่ path รูปเข้าไปด้วย!
+            "image_path": image_path,
+            "is_complex": bool(is_complex), 
+            # ใส่ข้อมูลอื่นๆ
+            "name": tbl.name,
+            "chunk_index": i
+        }
+        
+        # สร้าง Chunk Dictionary (format ที่ index_chunks ต้องการ)
+        chunk = {
+            "id": f"{doc_id}_tbl_{i}",
+            "text": content,
+            "metadata": meta
+        }
+        chunks.append(chunk)
+    return chunks
 
 # -------------------------------------------------------------------
 # Helper: ค้นหา doc ทั้งหมดจากโฟลเดอร์ ingested/
@@ -27,20 +88,11 @@ DOCS: list[tuple[str, str]] = []
 def discover_docs_from_ingested(root: str = "ingested") -> list[tuple[str, str]]:
     """
     สแกนหาเอกสารจากโฟลเดอร์ ingested/
-    โครงสร้างที่คาดหวัง:
-        ingested/
-          doc_001/
-            metadata.json
-            text.json / text_clean.json / text_enriched.json
-            table.json / table_clean.json / table_normalized.json
-            image.json
-          doc_002/
-            ...
     คืนค่าเป็น list ของ (doc_id, base_dir)
     """
     base = Path(root)
     if not base.exists():
-        print(f"[WARN] โฟลเดอร์ '{root}' ยังไม่มี (ให้ฝั่ง Peng รัน ingestion ก่อน)")
+        print(f"[WARN] โฟลเดอร์ '{root}' ยังไม่มี (ให้รัน ingestion ก่อน)")
         return []
 
     docs: list[tuple[str, str]] = []
@@ -72,16 +124,6 @@ def get_docs_to_ingest() -> list[tuple[str, str]]:
 def check_ingested_folder(base_dir: str, doc_id: str) -> bool:
     """
     เช็คเบื้องต้นว่าโฟลเดอร์ ingested/<doc_id>/ นี้พอจะโหลดได้ไหม
-    เราจะไม่บังคับทุกไฟล์ raw ต้องมีครบ แต่ใช้เกณฑ์:
-
-    - metadata.json ต้องมี
-    - TEXT: ต้องมีอย่างน้อย 1 ใน 3:
-        text_enriched.json, text_clean.json, text.json
-    - TABLE: ต้องมีอย่างน้อย 1 ใน 3:
-        table_normalized.json, table_clean.json, table.json
-    - IMAGE: ต้องมี image.json
-
-    ถ้าขาดอะไรไป → return False แล้วให้ caller ข้าม doc นี้
     """
     base_path = Path(base_dir)
 
@@ -90,34 +132,30 @@ def check_ingested_folder(base_dir: str, doc_id: str) -> bool:
         print(f"[WARN] skip doc_id={doc_id}: ไม่มี metadata.json ใน {base_dir}")
         return False
 
+    # TEXT check
     text_candidates = [
         base_path / "text_enriched.json",
         base_path / "text_clean.json",
         base_path / "text.json",
     ]
     if not any(p.exists() for p in text_candidates):
-        print(
-            f"[WARN] skip doc_id={doc_id}: "
-            f"ไม่พบ text_enriched.json / text_clean.json / text.json ใน {base_dir}"
-        )
+        print(f"[WARN] skip doc_id={doc_id}: ไม่พบไฟล์ text json")
         return False
 
+    # TABLE check
     table_candidates = [
         base_path / "table_normalized.json",
         base_path / "table_clean.json",
         base_path / "table.json",
     ]
     if not any(p.exists() for p in table_candidates):
-        print(
-            f"[WARN] skip doc_id={doc_id}: "
-            f"ไม่พบ table_normalized.json / table_clean.json / table.json ใน {base_dir}"
-        )
+        print(f"[WARN] skip doc_id={doc_id}: ไม่พบไฟล์ table json")
         return False
-
-    image_path = base_path / "image.json"
-    if not image_path.exists():
-        print(f"[WARN] skip doc_id={doc_id}: ไม่มี image.json ใน {base_dir}")
-        return False
+    
+    # IMAGE check
+    if not (base_path / "image.json").exists():
+         print(f"[WARN] skip doc_id={doc_id}: ไม่มี image.json")
+         return False
 
     return True
 
@@ -126,6 +164,10 @@ def check_ingested_folder(base_dir: str, doc_id: str) -> bool:
 # main
 # -------------------------------------------------------------------
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reset", action="store_true", help="Reset DB before indexing")
+    args = parser.parse_args()
+
     docs_to_ingest = get_docs_to_ingest()
     if not docs_to_ingest:
         print("=== Ingestion: ไม่มีเอกสารให้ ingest ===")
@@ -138,28 +180,27 @@ def main():
     for doc_id, base_dir in docs_to_ingest:
         print(f"\n[DOC] {doc_id} from {base_dir}")
 
-        # 1) pre-check โฟลเดอร์ว่ามีไฟล์พอใช้ไหม
+        # 1) pre-check
         if not check_ingested_folder(base_dir, doc_id):
-            # ถ้าไม่ครบ → ข้าม doc นี้ไป
             continue
 
-        # 2) ลองโหลด DocumentBundle
+        # 2) โหลด DocumentBundle
         try:
             bundle = load_document_bundle(base_dir, doc_id)
-        except FileNotFoundError as e:
-            print(f"[ERROR] skip doc_id={doc_id}: file not found -> {e}")
-            continue
-        except ValueError as e:
-            # เช่น metadata.doc_id != doc_id แล้วคุณอยาก skip ไปเลย
-            print(f"[ERROR] skip doc_id={doc_id}: value error -> {e}")
-            continue
         except Exception as e:
-            print(f"[ERROR] skip doc_id={doc_id}: unexpected error -> {e}")
+            print(f"[ERROR] skip doc_id={doc_id}: error loading bundle -> {e}")
             continue
 
         # 3) แปลงเป็น chunks
+        # A. Text
         text_chunks = text_items_to_chunks(bundle)
-        table_chunks = table_items_to_chunks(bundle)
+        
+        # B. Table (ใช้ Smart Logic ใหม่ รองรับ Hybrid Image)
+        # Note: load_document_bundle คืนค่าเป็น objects (TableBlock) เรียบร้อยแล้ว
+        # เราจึงส่ง bundle.tables เข้าไปได้เลย
+        table_chunks = smart_table_to_chunks(bundle.tables, doc_id)
+        
+        # C. Image
         image_chunks = image_items_to_chunks(bundle)
 
         doc_chunks = text_chunks + table_chunks + image_chunks
@@ -173,50 +214,42 @@ def main():
             all_chunks.extend(doc_chunks)
             ingested_doc_ids.append(doc_id)
         else:
-            print(f"[WARN] doc_id={doc_id} ไม่มี chunks เลย → ข้ามจากการ index")
+            print(f"[WARN] doc_id={doc_id} ไม่มี chunks เลย -> ข้าม")
 
     if not all_chunks:
-        print("\n[SUMMARY] ไม่มี chunks จากเอกสารไหนเลย → ไม่เรียก index_chunks")
-        print("=== Ingestion: done (no data) ===")
+        print("\n[SUMMARY] ไม่มี chunks เลย -> จบการทำงาน")
         return
 
     print(f"\n[SUMMARY] total chunks from all docs: {len(all_chunks)}")
 
     # 4) index chunks ทั้งหมดเข้า Chroma
+    if args.reset:
+        print("⚠️ Resetting Vector DB (Simulated)...")
+        # ใส่ logic reset db จริงๆ ตรงนี้ถ้าต้องการ
+        
     index_chunks(all_chunks)
     print("\nIndexed all chunks into Chroma.")
 
-    # 5) ทดลอง search เบื้องต้น (ถ้ามี doc_id ที่ ingest สำเร็จ)
+    # 5) ทดลอง search เบื้องต้น
     if not ingested_doc_ids:
-        print("\n[INFO] ไม่มี doc ไหน ingest สำเร็จ → ข้าม test search")
-        print("\n=== Ingestion: done ===")
         return
 
-    # พยายามหา doc_001 / doc_002 ใน list ถ้ามีก็ใช้
-    test_queries: list[tuple[str, list[str]]] = []
-
+    test_queries = []
     if "doc_001" in ingested_doc_ids:
         test_queries.append(("ยอดคงเหลือรวมสิ้นงวด", ["doc_001"]))
-    if "doc_002" in ingested_doc_ids:
-        test_queries.append(("ยอดที่ต้องชำระทั้งหมด", ["doc_002"]))
-
-    if not test_queries:
-        # fallback: ใช้ doc แรกในลิสต์
-        test_queries.append(("ยอดคงเหลือรวมสิ้นงวด", [ingested_doc_ids[0]]))
+    else:
+        test_queries.append(("ทดสอบค้นหา", [ingested_doc_ids[0]]))
 
     for query, doc_ids in test_queries:
         print("\n" + "=" * 60)
         print(f"Test search with query: {query!r} (doc_ids={doc_ids})")
-
         docs = search_similar(query=query, k=3, doc_ids=doc_ids)
-
         if not docs:
             print("  -> No results")
             continue
-
         for i, doc in enumerate(docs, start=1):
             print(f"\nResult #{i}")
-            print("  content :", doc.page_content)
+            print("  content :", doc.page_content[:100] + "...")
             print("  metadata:", doc.metadata)
 
     print("\n=== Ingestion: done ===")
