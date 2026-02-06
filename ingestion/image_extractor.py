@@ -166,13 +166,11 @@ def extract_images(
     # 2. วนลูปรูปที่ได้
     for i, item in enumerate(extracted_data):
         file_path_on_disk = Path(item["file_path"])
-        filename = item["filename"]
+        file_name = item["file_name"] # รับ key ใหม่
         
         img_id = f"img_{doc_id}_{i+1:04d}"
         
-        # [CHANGE] เรียกใช้ฟังก์ชัน Hybrid แทนของเดิม
-        # ฟังก์ชันนี้จะจัดการเรื่อง Client, Fallback และ Sleep ให้เองข้างใน
-        print(f"[image_extractor] Generating caption for {filename}...")
+        print(f"[image_extractor] Generating caption for {file_name}...") # แก้ print
         caption_text = _generate_caption_hybrid(file_path_on_disk)
         
         # สร้าง Object ImageBlock
@@ -187,7 +185,7 @@ def extract_images(
             bbox=item["bbox"],
             extra={
                 "source": "docling",
-                "original_filename": filename,
+                "original_file_name": file_name, # แก้ key ใน extra ให้สอดคล้อง
                 "ai_captioned": bool(caption_text),
                 "ai_model": "hybrid"
             },

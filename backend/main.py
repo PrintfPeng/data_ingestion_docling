@@ -11,7 +11,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-
+import time
 # Internal services
 from .services.logger import append_log, read_logs
 from .services.rag import answer_question
@@ -308,10 +308,13 @@ async def upload_pdf(
         ) from e
 
     # 5. Re-index Vector DB (ingest_doc.py handles Hybrid Metadata)
+    reset_vector_store_cache()
     try:
-        cmd = [sys.executable, "-m", "backend.scripts.ingest_doc"]
+        cmd = [sys.executable, "-m", "scripts.ingest_doc"]
         print(f"[UPLOAD] Re-indexing: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
+        print("[UPLOAD] ⏳ Waiting for DB lock release (3s)...")
+        time.sleep(3)
     except subprocess.CalledProcessError as e:
         raise HTTPException(
             status_code=500,

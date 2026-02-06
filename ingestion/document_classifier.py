@@ -129,7 +129,7 @@ def classify_document_rule_based(doc: IngestedDocument) -> str:
     รองรับทั้งไทยและอังกฤษ
     """
     text = _collect_sample_text(doc.texts).lower()
-    fname = (doc.metadata.filename or "").lower()
+    fname = (doc.metadata.file_name or "").lower()
     combined = f"{fname} {text}"
 
     # 1. Finance
@@ -166,11 +166,11 @@ def classify_document_with_llm(doc: IngestedDocument) -> str:
     # ถ้าไม่มี Text เลย ให้ใช้ Rule-based (ซึ่งจะดูชื่อไฟล์แทน)
     if not sample_text: return classify_document_rule_based(doc)
 
-    filename = doc.metadata.filename or ""
+    file_name = doc.metadata.file_name or ""
     
     prompt = (
         f"Analyze this document content and filename.\n"
-        f"Filename: {filename}\n"
+        f"Filename: {file_name}\n"
         f"Content Sample (First 4000 chars):\n{sample_text}\n\n"
         f"Classify into exactly one of these types:\n"
         f"{', '.join(CANDIDATE_TYPES)}\n\n"

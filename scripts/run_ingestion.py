@@ -98,14 +98,22 @@ def run_ingestion_pipeline(
     # สร้าง Config ที่ระบุ output_dir
     config = IngestionConfig(output_dir=str(doc_dir))
 
-    # 2) Parse PDF ด้วย Docling (Engine ใหม่)
+# 2) Parse PDF ด้วย Docling
     print(f"[INGEST] Parsing PDF with Docling: {pdf_path}")
     parser = DoclingParser(config=config)
     doc = parser.parse(str(pdf_path))
     
-    # อัปเดต Metadata พื้นฐาน
-    doc.metadata.doc_id = doc_id
+    # --- [เพิ่มตรงนี้ครับ] ---
+    # อัปเดต Metadata พื้นฐาน และ Sync ID ไปทุกส่วน
+    doc.metadata.doc_id = doc_id 
     doc.metadata.doc_type = doc_type
+    
+    # วนลูปยัด ID ใส่ทุกก้อนข้อมูล เพื่อความชัวร์ 100%
+    for t in doc.texts: 
+        t.doc_id = doc_id
+    for tb in doc.tables: 
+        tb.doc_id = doc_id
+    # -----------------------
 
     # 3) ต่อข้อความจาก OCR เสริม (ถ้าเปิด)
     _attach_ocr_text(doc, pdf_path, use_ocr=use_ocr)
@@ -181,7 +189,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Run ingestion pipeline for a PDF.")
     parser.add_argument("pdf_path", help="Path to PDF file")
-    parser.add_argument("--doc-id", default=None, help="Document ID (default: from filename)")
+    parser.add_argument("--doc-id", default=None, help="Document ID (default: from file_name)")
     parser.add_argument(
         "--doc-type",
         default="generic",

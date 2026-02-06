@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import argparse
 from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Dict, Any
 
 # Services
 from backend.services.loader import load_document_bundle
@@ -25,10 +27,24 @@ logger = logging.getLogger(__name__)
 # ถ้าปล่อย [] ไว้ จะ auto-scan จากโฟลเดอร์ ingested/
 DOCS: list[tuple[str, str]] = []
 
+@dataclass
+class Chunk:
+    id: str
+    content: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    # เพิ่ม 4 บรรทัดนี้ครับ
+    doc_id: str = ""
+    doc_type: str = "generic"
+    source: str = "unknown"
+    page: int = 1
+
 # -------------------------------------------------------------------
 # [HYBRID UPGRADE] Smart Table Chunking Logic
 # -------------------------------------------------------------------
-def smart_table_to_chunks(tables: list, doc_id: str):
+# -------------------------------------------------------------------
+# [HYBRID UPGRADE] Smart Table Chunking Logic
+# -------------------------------------------------------------------
+def smart_table_to_chunks(tables: list, doc_id: str, doc_type: str = "generic"):
     """
     สร้าง Chunk สำหรับตารางแบบ Hybrid:
     1. ถ้าเป็น Complex Table -> เก็บ image_path ไว้ใน Metadata เพื่อให้ Frontend โชว์รูป
@@ -37,48 +53,50 @@ def smart_table_to_chunks(tables: list, doc_id: str):
     chunks = []
     for i, tbl in enumerate(tables):
         # 1. เตรียม Content (ใช้ Markdown เป็นหลักในการค้นหา)
-        # ตารางแบบ Complex ก็จะมี Markdown ซ่อนอยู่ (จาก Docling)
         content = getattr(tbl, "markdown", "") or ""
         
-        # Fallback: ถ้าไม่มี Markdown ให้เอา Header + Rows มาต่อกันดื้อๆ
+        # Fallback: ถ้าไม่มี Markdown ให้เอา Header + Rows มาต่อกัน
         if not content and tbl.columns:
-            content = " | ".join(tbl.columns) + "\n"
-            content += "\n".join([" | ".join(map(str, row)) for row in tbl.rows[:5]]) # เอาแค่ 5 แถวพอเป็นตัวอย่าง
+            # แปลงทุกอย่างเป็น string ก่อน join เพื่อกัน error
+            header_str = " | ".join(map(str, tbl.columns))
+            rows_str = "\n".join([" | ".join(map(str, row)) for row in tbl.rows[:5]]) 
+            content = f"{header_str}\n{rows_str}"
 
         if not content.strip():
             continue
 
         # 2. ดึงค่าจาก Object (รองรับทั้ง Attribute และ Extra dict)
-        # เช็ค image_path
         image_path = getattr(tbl, "image_path", None)
         if not image_path and tbl.extra:
             image_path = tbl.extra.get("image_path")
             
-        # เช็ค is_complex
         is_complex = getattr(tbl, "is_complex", False)
         if not is_complex and tbl.extra:
             is_complex = tbl.extra.get("is_complex", False)
 
-        # 3. เตรียม Metadata (หัวใจสำคัญ!)
+        # 3. เตรียม Metadata
         meta = {
             "source": "table",
             "doc_id": doc_id,
             "page": tbl.page,
-            "table_id": tbl.id, # เช่น TBL_0
-            # [CRITICAL] ใส่ path รูปเข้าไปด้วย!
+            "table_id": tbl.id,
             "image_path": image_path,
             "is_complex": bool(is_complex), 
-            # ใส่ข้อมูลอื่นๆ
             "name": tbl.name,
             "chunk_index": i
         }
+        page_val = tbl.page if isinstance(tbl.page, int) else 1
         
-        # สร้าง Chunk Dictionary (format ที่ index_chunks ต้องการ)
-        chunk = {
-            "id": f"{doc_id}_tbl_{i}",
-            "text": content,
-            "metadata": meta
-        }
+        chunk = Chunk(
+            id=f"{doc_id}_tbl_{i}",
+            content=content, 
+            metadata=meta,
+            # เพิ่ม 4 บรรทัดนี้ต่อท้ายครับ
+            doc_id=doc_id,
+            doc_type=doc_type,
+            source="table",
+            page=page_val
+        )
         chunks.append(chunk)
     return chunks
 
@@ -190,7 +208,11 @@ def main():
         except Exception as e:
             print(f"[ERROR] skip doc_id={doc_id}: error loading bundle -> {e}")
             continue
-
+             
+        current_doc_type = "generic"
+        if bundle.metadata and hasattr(bundle.metadata, "doc_type"):
+            current_doc_type = bundle.metadata.doc_type
+             
         # 3) แปลงเป็น chunks
         # A. Text
         text_chunks = text_items_to_chunks(bundle)
@@ -198,7 +220,7 @@ def main():
         # B. Table (ใช้ Smart Logic ใหม่ รองรับ Hybrid Image)
         # Note: load_document_bundle คืนค่าเป็น objects (TableBlock) เรียบร้อยแล้ว
         # เราจึงส่ง bundle.tables เข้าไปได้เลย
-        table_chunks = smart_table_to_chunks(bundle.tables, doc_id)
+        table_chunks = smart_table_to_chunks(bundle.tables, doc_id, doc_type=current_doc_type)
         
         # C. Image
         image_chunks = image_items_to_chunks(bundle)

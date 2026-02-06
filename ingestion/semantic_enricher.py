@@ -531,6 +531,6 @@ def prepare_mapping_payload(doc: IngestedDocument) -> Dict[str, Any]:
     return {
         "doc_id": doc.metadata.doc_id,
         "doc_type": doc.metadata.doc_type,
-        "file_name": doc.metadata.filename,
+        "file_name": doc.metadata.file_name,
         "transactions": all_transactions,
     }
