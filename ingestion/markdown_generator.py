@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import List, Any
 from dataclasses import dataclass
-
+from pathlib import Path
 from .schema import IngestedDocument, TextBlock, TableBlock, ImageBlock
 
 @dataclass
@@ -112,7 +112,7 @@ def _format_image_block(block: ImageBlock) -> str:
     
     return "\n".join(md_lines)
 
-def generate_markdown(doc: IngestedDocument, output_dir: Path):
+def generate_markdown(doc: IngestedDocument) -> str:
     """
     [Feature 1] Main Loop: เรียงลำดับตามตำแหน่งจริง
     """
@@ -162,10 +162,5 @@ def generate_markdown(doc: IngestedDocument, output_dir: Path):
         elif item.type == 'image':
             md_content.append(_format_image_block(item.content))
             
-    # Save File
-    output_path = output_dir / f"{doc.metadata.doc_id}.md"
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(md_content))
-        
-    print(f"✅ [Markdown] Generated Smart Report at: {output_path}")
+    # Return content as string (ส่งค่ากลับไปให้ run_ingestion เขียนไฟล์)
+    return "\n".join(md_content)

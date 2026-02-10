@@ -131,19 +131,24 @@ def reset_vector_store_cache():
     ท่าไม้ตาย: สั่งล้าง Cache ของ Vector DB ทั้งหมดทันที
     ใช้เรียกตอน Upload เสร็จ เพื่อให้ครั้งต่อไประบบต้องโหลด DB ใหม่แน่นอน
     """
+    # 1. เรียกตัวแปร Global มาใช้งาน
     global _vectordb_cache
     
+    # 2. ตรวจสอบและล้าง Cache
     if _vectordb_cache:
-        print(f"[vector_store] 🧹 Force clearing {_vectordb_cache} cache entries...")
+        # [แก้] ใช้ len() เพื่อดูจำนวนแทนการปริ้นท์ทั้งก้อน (ป้องกัน Log รก/พัง)
+        print(f"[vector_store] 🧹 Force clearing cache: {len(_vectordb_cache)} entries...")
         _vectordb_cache.clear()
+    else:
+        print("[vector_store] 🧹 Cache is already empty.")
     
-    # บังคับ Python คืน RAM และปลด File Lock ทันที (แก้ปัญหา Windows Error)
+    # 3. บังคับ Python คืน RAM และปลด File Lock ทันที (แก้ปัญหา Windows Error Finding ID)
     try:
         import gc
         gc.collect()
-        print("[vector_store] 🗑️ Garbage collection done.")
+        print("[vector_store] 🗑️ Garbage collection done (DB Lock released).")
     except Exception as e:
-        print(f"[vector_store] GC Error: {e}")
+        print(f"[vector_store] ❌ GC Error: {e}")
 
 def _normalize_metadata(md: dict) -> dict:
     """แปลงค่า complex types เป็น string เพื่อให้ Chroma เก็บได้"""

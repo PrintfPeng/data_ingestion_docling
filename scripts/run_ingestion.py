@@ -1,10 +1,12 @@
 # scripts/run_ingestion.py
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
 import json
+import argparse
+from pathlib import Path
+import sys
 import re
+from typing import Optional, List
 
 # [CHANGE] ใช้ DoclingParser ตัวใหม่ที่เราทำ Hybrid Ingestion ไว้
 from ingestion.docling_parser import DoclingParser
@@ -16,6 +18,8 @@ from ingestion.image_extractor import extract_images
 from ingestion.schema import IngestedDocument, TextBlock
 from ingestion.validator import validate_all
 from ingestion.ocr_extractor import ocr_extract_document
+# [IMPORTANT] ต้องเรียกตัวนี้มาใช้ ไม่งั้นไฟล์ .md ไม่เกิด
+from ingestion.markdown_generator import generate_markdown
 
 
 # Helper Class สำหรับส่ง Config ให้ DoclingParser (เพื่อให้เซฟรูปได้ถูกที่)
@@ -34,12 +38,20 @@ def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path, use_ocr: bool = True
     try:
         # หมายเหตุ: Docling มี OCR ในตัวอยู่แล้ว (Tesseract)
         # แต่ถ้าอยากใช้ Gemini OCR เสริมอีก ก็เปิดไว้ได้ครับ
+        # (ฟังก์ชันนี้จะเรียก ocr_extract_document จาก ingestion/ocr_extractor.py)
         ocr_result = ocr_extract_document(str(pdf_path))
     except Exception as e:
         print(f"[OCR] Skip extra OCR because error: {e!r}")
         return
 
+    # ถ้า ocr_result เป็น dict หรือ object ก็ต้องดึงค่าออกมาให้ถูก
+    # สมมติว่า ocr_result มี attribute .texts หรือเป็น dict ที่มี key "texts"
     texts = getattr(ocr_result, "texts", None)
+    
+    # Fallback ถ้า ocr_result เป็น list ของ TextBlock โดยตรง (ขึ้นอยู่กับการ implement ของ ocr_extractor)
+    if not texts and isinstance(ocr_result, list):
+        texts = ocr_result
+
     if not texts:
         return
 
@@ -49,11 +61,17 @@ def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path, use_ocr: bool = True
     doc_id = doc.metadata.doc_id
 
     for item in texts:
-        content = (item.get("content") or "").strip()
+        # รองรับทั้งแบบ Dict และ Object
+        if isinstance(item, dict):
+            content = (item.get("content") or "").strip()
+            page = int(item.get("page") or 1)
+        else:
+            content = (getattr(item, "content", "") or "").strip()
+            page = int(getattr(item, "page", 1))
+
         if not content:
             continue
 
-        page = int(item.get("page") or 1)
         current_index += 1
         block_id = f"ocr_{current_index:04d}"
 
@@ -80,10 +98,10 @@ def run_ingestion_pipeline(
     2) อ่าน PDF ด้วย DoclingParser (Text + Complex Tables as Images)
     3) เสริม OCR (Optional)
     4) Classify และดึงรูปประกอบทั่วไป
-    5) Validate และ Save
+    5) Validate และ Save JSON + Markdown
     """
-    pdf_path = Path(pdf_path)
-    output_root = Path(output_root)
+    pdf_path = Path(pdf_path).resolve()
+    output_root = Path(output_root).resolve()
 
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
@@ -92,18 +110,29 @@ def run_ingestion_pipeline(
     if not doc_id:
         doc_id = pdf_path.stem.replace(" ", "_")
     
+    # โฟลเดอร์ปลายทาง: ingested/{doc_id}/
     doc_dir = output_root / doc_id
     doc_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"=== [INGEST] Start Pipeline for: {doc_id} ===")
+    print(f"    PDF: {pdf_path}")
+    print(f"    Output: {doc_dir}")
 
-    # สร้าง Config ที่ระบุ output_dir
+    # สร้าง Config ที่ระบุ output_dir เพื่อส่งให้ Docling
+    # นี่คือจุดสำคัญที่ทำให้ Docling รู้ว่าจะเซฟรูปตารางลงที่ไหน
     config = IngestionConfig(output_dir=str(doc_dir))
 
-# 2) Parse PDF ด้วย Docling
+    # 2) Parse PDF ด้วย Docling
     print(f"[INGEST] Parsing PDF with Docling: {pdf_path}")
-    parser = DoclingParser(config=config)
-    doc = parser.parse(str(pdf_path))
     
-    # --- [เพิ่มตรงนี้ครับ] ---
+    try:
+        parser = DoclingParser(config=config)
+        doc = parser.parse(str(pdf_path))
+    except Exception as e:
+        print(f"[ERROR] Docling parsing failed: {e}")
+        return
+    
+    # --- [Sync Metadata & IDs] ---
     # อัปเดต Metadata พื้นฐาน และ Sync ID ไปทุกส่วน
     doc.metadata.doc_id = doc_id 
     doc.metadata.doc_type = doc_type
@@ -116,26 +145,32 @@ def run_ingestion_pipeline(
     # -----------------------
 
     # 3) ต่อข้อความจาก OCR เสริม (ถ้าเปิด)
+    # ฟังก์ชันนี้จะเรียก ocr_extractor.py ถ้าคุณมี
     _attach_ocr_text(doc, pdf_path, use_ocr=use_ocr)
 
     # 4) Classify doc_type
     if doc_type == "generic" or not doc.metadata.doc_type:
-        detected_type = classify_document(doc, use_llm=False)
-        print(f"[INGEST] Detected doc_type: {detected_type}")
-        doc.metadata.doc_type = detected_type
+        try:
+            detected_type = classify_document(doc, use_llm=False)
+            print(f"[INGEST] Detected doc_type: {detected_type}")
+            doc.metadata.doc_type = detected_type
+        except Exception as e:
+            print(f"[WARN] Classification failed: {e}")
 
     # (Skip Table Extraction: เพราะ Docling ทำให้แล้ว)
 
     # 5) ดึงรูปประกอบอื่นๆ (ที่ไม่ใช่ตาราง)
     print("[INGEST] Extracting general images ...")
     try:
+        # extract_images จะไปเรียก DoclingImageParser หรือวิธีการอื่น
         general_images = extract_images(
-            file_path=pdf_path,
+            file_path=str(pdf_path), 
             doc_id=doc_id,
-            output_root=output_root,
+            output_root=str(output_root), # ส่ง root ไป เดี๋ยวข้างในไปต่อ path เอง
         )
-        # เติมเข้าไป (ต่อท้ายรูปตารางที่มีอยู่แล้ว)
-        doc.images.extend(general_images)
+        if general_images:
+            print(f"   + Found {len(general_images)} general images")
+            doc.images.extend(general_images)
     except Exception as e:
         print(f"[WARN] Image extraction failed: {e}")
 
@@ -152,6 +187,8 @@ def run_ingestion_pipeline(
     # 7) Validate
     print("[INGEST] Validating document ...")
     issues = validate_all(doc)
+    if issues:
+        print(f"[WARN] Validation found {len(issues)} issues")
 
     # 8) Save Output
     metadata_path = doc_dir / "metadata.json"
@@ -159,7 +196,11 @@ def run_ingestion_pipeline(
     table_path = doc_dir / "table.json"
     image_path = doc_dir / "image.json"
     validation_path = doc_dir / "validation.json"
+    
+    # [IMPORTANT] กำหนด Path สำหรับไฟล์ Markdown
+    md_path = doc_dir / f"{doc_id}.md"
 
+    # Save JSON files
     with metadata_path.open("w", encoding="utf-8") as f:
         json.dump(doc.metadata.to_dict(), f, ensure_ascii=False, indent=2)
 
@@ -176,17 +217,31 @@ def run_ingestion_pipeline(
     with validation_path.open("w", encoding="utf-8") as f:
         json.dump(issues, f, ensure_ascii=False, indent=2)
 
+    # 9) Generate & Save Markdown (.md)
+    try:
+        print(f"[INGEST] Generating Markdown for {doc_id}...")
+        
+        # เรียกใช้โดยส่งแค่ doc (ไม่ต้องส่ง output_dir แล้ว)
+        md_content = generate_markdown(doc)
+        
+        # เขียนไฟล์ตรงนี้แทน
+        with md_path.open("w", encoding="utf-8") as f:
+            f.write(md_content)
+            
+        print(f"   ✅ Markdown saved to: {md_path}")
+    except Exception as e:
+        print(f"[WARN] Failed to generate markdown: {e}")
+
     print("[INGEST] Saved successfully:")
     print(f"  - {metadata_path}")
     print(f"  - {text_path}")
     print(f"  - {table_path} (Tables: {len(doc.tables)})")
     print(f"  - {image_path}")
     print(f"  - {validation_path}")
+    print(f"  - {md_path}") 
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Run ingestion pipeline for a PDF.")
     parser.add_argument("pdf_path", help="Path to PDF file")
     parser.add_argument("--doc-id", default=None, help="Document ID (default: from file_name)")

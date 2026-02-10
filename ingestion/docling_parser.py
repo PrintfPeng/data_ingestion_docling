@@ -14,32 +14,26 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
 
-from .schema import IngestedDocument, TableBlock, TextBlock, DocumentMetadata
+from .schema import IngestedDocument, TableBlock, TextBlock, DocumentMetadata, ImageBlock
+
 
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
-# Helper Function for Complexity Check
-# -------------------------------------------------------------------
-def is_complex_table(df: pd.DataFrame, sparsity_threshold=0.5) -> bool:
-    if df.empty: return False
-    total_cells = df.size
-    if total_cells == 0: return False
-    empty_cells = df.isna().sum().sum() + (df.astype(str).map(lambda x: x.strip() == '')).sum().sum()
-    return bool((empty_cells / total_cells) > sparsity_threshold)
-
-# -------------------------------------------------------------------
-# MAIN PARSER
+# MAIN PARSER (Table Extractor)
 # -------------------------------------------------------------------
 class DoclingParser:
     def __init__(self, config=None):
         self.config = config
+        
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
         pipeline_options.do_table_structure = True
-        pipeline_options.table_structure_options = TableStructureOptions(do_cell_matching=True)
+        pipeline_options.table_structure_options = TableStructureOptions(
+            do_cell_matching=True
+        )
         pipeline_options.generate_page_images = True 
-        pipeline_options.images_scale = 2.0 
+        pipeline_options.images_scale = 3.0 
 
         self.converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
@@ -63,9 +57,16 @@ class DoclingParser:
 
             doc_id = Path(file_path).stem
             
-            # Extract Components
             text_blocks = self._process_text(doc, doc_id)
-            table_blocks = self._process_tables(doc, page_images, doc_id)
+            
+            # Prepare output dir
+            output_dir = None
+            if self.config and getattr(self.config, 'output_dir', None):
+                output_dir = self.config.output_dir
+            else:
+                output_dir = str(Path("ingested") / doc_id)
+
+            table_blocks, table_images = self._process_tables(doc, page_images, doc_id, output_dir)
 
             metadata = DocumentMetadata(
                 doc_id=doc_id,
@@ -76,12 +77,11 @@ class DoclingParser:
                 source="docling"
             )
 
-            # [FIXED] IngestedDocument Instantiation
             return IngestedDocument(
                 metadata=metadata,
                 texts=text_blocks,
                 tables=table_blocks,
-                images=[]
+                images=table_images 
             )
 
         except Exception as e:
@@ -105,58 +105,84 @@ class DoclingParser:
                 ))
         return blocks
 
-    def _process_tables(self, doc, page_images: dict, doc_id: str) -> List[TableBlock]:
+    def _process_tables(self, doc, page_images: dict, doc_id: str, output_dir: str) -> Tuple[List[TableBlock], List[ImageBlock]]:
         blocks = []
+        img_blocks = [] # [เพิ่ม] ลิสต์เก็บรูปตาราง
+        
+        img_output_dir = os.path.join(output_dir, "images")
+        os.makedirs(img_output_dir, exist_ok=True)
+
         for i, table in enumerate(doc.tables):
-            # Pass doc to avoid deprecation warnings
             df = table.export_to_dataframe(doc)
             md = table.export_to_markdown(doc)
-            is_complex = is_complex_table(df)
-            saved_image_path = None
             
-            if is_complex and self.config and getattr(self.config, 'output_dir', None):
-                try:
-                    page_no = table.prov[0].page_no
-                    page_img = page_images.get(page_no)
-                    if page_img:
-                        bbox = table.prov[0].bbox
-                        
-                        # Calculate Crop Box
-                        # ต้องแน่ใจว่าพิกัดถูกต้องและไม่ติดลบ
-                        l, r = min(bbox.l, bbox.r), max(bbox.l, bbox.r)
-                        t, b = min(bbox.t, bbox.b), max(bbox.t, bbox.b)
-                        
-                        scale = 2.0 # Match images_scale
-                        crop_box = (l * scale, t * scale, r * scale, b * scale)
-                        
-                        table_img = page_img.crop(crop_box)
-                        
-                        img_dir = os.path.join(self.config.output_dir, "images")
-                        os.makedirs(img_dir, exist_ok=True)
-                        file_name = f"complex_tbl_p{page_no}_{i}.png"
-                        table_img.save(os.path.join(img_dir, file_name))
-                        saved_image_path = f"images/{file_name}"
-                        logger.info(f"   ⚠️ Complex Form detected. Saved image: {saved_image_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to save table image: {e}")
-
+            saved_image_path = None
             page_no = table.prov[0].page_no if table.prov else 1
+            bbox_tuple = table.prov[0].bbox.as_tuple() if table.prov else None # เก็บ bbox ไว้ใช้
+            
+            try:
+                page_img = page_images.get(page_no)
+                if page_img:
+
+                    bbox = table.prov[0].bbox
+                    scale = 3.0
+                    l, t, r, b = bbox.l * scale, bbox.t * scale, bbox.r * scale, bbox.b * scale
+                    coords = [l, t, r, b]
+                    x0, y0 = min(coords[0], coords[2]), min(coords[1], coords[3])
+                    x1, y1 = max(coords[0], coords[2]), max(coords[1], coords[3])
+                    table_w, table_h = x1 - x0, y1 - y0
+                    pad_x = max(20, int(table_w * 0.02))
+                    pad_y = max(20, int(table_h * 0.02))
+                    img_w, img_h = page_img.size
+                    final_x0 = max(0, int(x0 - pad_x))
+                    final_y0 = max(0, int(y0 - pad_y))
+                    final_x1 = min(img_w, int(x1 + pad_x))
+                    final_y1 = min(img_h, int(y1 + pad_y))
+                    
+                    if final_x1 > final_x0 and final_y1 > final_y0:
+                        crop_box = (final_x0, final_y0, final_x1, final_y1)
+                        table_img = page_img.crop(crop_box)
+                        filename = f"table_p{page_no:03d}_{i:03d}.png"
+                        full_save_path = os.path.join(img_output_dir, filename)
+                        table_img.save(full_save_path)
+                        saved_image_path = f"images/{filename}"
+
+                        # [เพิ่ม] สร้าง ImageBlock ตรงนี้!
+                        img_blk = ImageBlock(
+                            id=f"img_tbl_{i}",
+                            doc_id=doc_id,
+                            page=page_no,
+                            file_path=saved_image_path,
+                            caption=f"Table {i+1} extracted from page {page_no}",
+                            bbox=bbox_tuple,
+                            section="table",
+                            category="table_image",
+                            extra={"source": "docling_table"}
+                        )
+                        img_blocks.append(img_blk)
+
+            except Exception as e:
+                logger.warning(f"Failed to save table image: {e}")
+
             blocks.append(TableBlock(
                 id=f"TBL_{i}",
                 doc_id=doc_id,
                 page=page_no,
-                columns=[str(c) for c in df.columns], 
+                columns=[str(c) for c in df.columns],
                 rows=df.values.tolist(),
                 markdown=md,
                 image_path=saved_image_path,
-                is_complex=bool(is_complex),
+                is_complex=True,
                 source="docling",
                 structured_available=bool(not df.empty),
-                bbox=table.prov[0].bbox.as_tuple() if table.prov else None
+                bbox=bbox_tuple
             ))
-        return blocks
+            
+        return blocks, img_blocks # [เพิ่ม] ส่งคืน 2 ค่า
 
-# [MANDATORY] DoclingImageParser for backward compatibility
+# -------------------------------------------------------------------
+# IMAGE PARSER (General Image Extractor)
+# -------------------------------------------------------------------
 class DoclingImageParser:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -175,6 +201,7 @@ class DoclingImageParser:
         file_path = Path(pdf_path).resolve()
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
+        
         print(f"[DoclingImageParser] Scanning images in: {file_path.name} ...")
         try:
             conv_res = self.converter.convert(file_path)
@@ -196,10 +223,22 @@ class DoclingImageParser:
                     img_obj = picture.get_image(doc)
                     if img_obj:
                         img_obj.save(image_save_path, "PNG")
+                        
+                        # [CRITICAL FIX] Convert Absolute Path to Relative Path
+                        # จาก C:\Users\...\ingested\doc_id\img.png -> ingested/doc_id/img.png
+                        try:
+                            # หา Path สัมพัทธ์จากจุดที่รันโปรแกรม (Root)
+                            rel_path = os.path.relpath(image_save_path, os.getcwd())
+                            # เปลี่ยน Backslash (\) เป็น Slash (/) เพื่อให้ Web Browser เข้าใจ
+                            rel_path = rel_path.replace("\\", "/")
+                        except ValueError:
+                            # กันพลาดกรณีข้าม Drive
+                            rel_path = str(image_save_path)
+
                         saved_images.append({
                             "index": i,
-                            "file_path": str(image_save_path),
-                            "file_name": image_filename, # แก้ key เป็น file_name
+                            "file_path": rel_path,  # <--- แก้ตรงนี้ครับ! ส่ง Path สั้นไป
+                            "file_name": image_filename,
                             "page": page_no,
                             "bbox": bbox
                         })
