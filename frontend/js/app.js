@@ -19,6 +19,8 @@ const docSelectMobile = document.getElementById("docSelectMobile");
 
 let historyVisible = false;
 let attachedFile = null;
+// [NEW] เก็บประวัติการสนทนาสำหรับส่งไปให้ Bot จำบริบท
+let chatHistory = []; 
 
 // =======================
 // 🔐 DOMPurify Configuration
@@ -217,6 +219,13 @@ function scrollToBottom() {
 }
 
 function appendMessage(role, text, options = {}) {
+    // [NEW] เก็บประวัติลง Memory
+    // ตัดข้อความบางอย่างที่ไม่จำเป็น เช่น "[SHOW_...]" ออกหากต้องการ แต่เก็บ text ดิบก็พอได้
+    chatHistory.push({ role: role, content: text });
+    if (chatHistory.length > 10) {
+        chatHistory = chatHistory.slice(-10); // เก็บแค่ 10 อันล่าสุด
+    }
+
     const isUser = role === "user";
     const wrapper = document.createElement("div");
     wrapper.className = `flex w-full mb-6 msg-animate ${isUser ? "justify-end" : "justify-start"}`;
@@ -399,12 +408,17 @@ async function sendMessage() {
         scrollToBottom();
 
         try {
+            // [NEW] เตรียม History ส่งไป Backend (ตัดข้อความล่าสุดของ User ที่เพิ่งพิมพ์ไปออก เพราะเดี๋ยว Backend จะเอาไปรวมเอง หรือรวมไปเลยก็ได้ แต่ปกติตัดออกดีกว่าถ้า Backend รับ query แยก)
+            // ในที่นี้ Backend รับ query แยก ดังนั้นส่ง history ก่อนหน้านั้นไป
+            const historyToSend = chatHistory.slice(0, -1);
+
             // [FIX 4] ตรวจสอบ selectedDocId ก่อนส่ง (ถ้าเป็น "" คือเลือก All ให้ส่ง null)
             const payload = { 
                 query: text, 
                 doc_ids: selectedDocId ? [selectedDocId] : null, 
                 top_k: 20, 
-                mode: mode 
+                mode: mode,
+                history: historyToSend // [NEW] ส่งประวัติไปด้วย
             };
             
             const res = await fetch("/ask", { 

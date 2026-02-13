@@ -77,6 +77,8 @@ class AskRequest(BaseModel):
     doc_ids: Optional[List[str]] = None
     top_k: int = 5
     mode: Literal["auto", "text", "table", "both"] = "auto"
+    # [NEW] รับประวัติการแชท (List of dicts: [{"role": "user", "content": "..."}, ...])
+    history: List[Dict[str, str]] = [] 
 
 class AskResponse(BaseModel):
     answer: str
@@ -98,6 +100,7 @@ async def ask(req: AskRequest):
         doc_ids=sanitized_doc_ids,
         top_k=req.top_k,
         mode=req.mode,
+        history=req.history # [NEW] ส่ง history ไปให้ rag service ด้วย
     )
 
     # Post-Processing: Convert [SHOW_TABLE] tags

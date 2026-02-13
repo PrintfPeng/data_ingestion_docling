@@ -14,12 +14,14 @@ from dotenv import load_dotenv
 # [CHANGE] เปลี่ยน Import เป็น ChatOpenAI สำหรับ Custom API
 try:
     from langchain_openai import ChatOpenAI
-    from langchain_core.messages import HumanMessage, SystemMessage
+    # [UPDATED] เพิ่ม AIMessage เพื่อรองรับ History
+    from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
     _HAS_GENAI = True
 except Exception:
     ChatOpenAI = None  # type: ignore
     HumanMessage = None  # type: ignore
     SystemMessage = None  # type: ignore
+    AIMessage = None # type: ignore
     _HAS_GENAI = False
 
 # --- Re-ranking imports ---
@@ -487,15 +489,56 @@ def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
 
 
 # -------------------------------------------------------------------
-# 5) main RAG function (UPGRADED & ROBUST)
+# [NEW FUNCTION] Query Rewriting Logic
+# -------------------------------------------------------------------
+async def _rewrite_query_with_history(llm, query: str, history: List[Dict[str, str]]) -> str:
+    """แปลงคำถาม Follow-up ให้เป็นคำถามเต็ม โดยดูจากประวัติ"""
+    if not history:
+        return query
+
+    # แปลง history dict เป็น String
+    history_context = ""
+    # เอาแค่ 4 ข้อความล่าสุดก็พอ เพื่อไม่ให้ Prompt ยาวเกินไป
+    for msg in history[-4:]: 
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = msg.get("content", "").replace("\n", " ")
+        history_context += f"{role}: {content}\n"
+
+    prompt = (
+        "ภารกิจ: แปลงคำถามของผู้ใช้ (Current Input) ให้เป็นประโยคคำถามที่สมบูรณ์และเข้าใจได้ด้วยตัวเอง "
+        "โดยอ้างอิงบริบทจากการสนทนาก่อนหน้า (History) เพื่อนำไปใช้ค้นหาข้อมูลในระบบ\n"
+        "ข้อควรระวัง: ห้ามตอบคำถาม! ให้ทำหน้าที่แค่เรียบเรียงประโยคใหม่เท่านั้น\n"
+        "ถ้าคำถามสมบูรณ์อยู่แล้ว ให้ส่งคืนคำถามเดิมได้เลย\n\n"
+        f"--- History ---\n{history_context}\n"
+        f"--- Current Input ---\nUser: {query}\n"
+        "--- Standalone Question (Thai) ---"
+    )
+    
+    try:
+        # ใช้ LLM ตัวเดียวกับที่ใช้ตอบคำถาม
+        res = await llm.ainvoke([HumanMessage(content=prompt)])
+        new_query = getattr(res, "content", str(res)).strip()
+        logger.info(f"[RAG] 🔄 Rewritten Query: '{query}' -> '{new_query}'")
+        return new_query
+    except Exception as e:
+        logger.error(f"[RAG] Rewrite failed: {e}")
+        return query
+
+
+# -------------------------------------------------------------------
+# 5) main RAG function (UPGRADED & ROBUST & STATEFUL)
 # -------------------------------------------------------------------
 async def answer_question(
     query: str,
     doc_ids: Optional[List[str]] = None,
     top_k: int = 10,
     mode: str = "auto",
+    history: List[Dict[str, str]] = [] # [NEW] รับ History เข้ามา
 ) -> Dict:
     
+    # Init LLM เร็วขึ้นเพื่อใช้ Rewrite Query
+    llm = _get_llm_instance(model=_LL_MODEL_FAST)
+
     # 1. Input Check
     if not query or not query.strip():
         return {"answer": "กรุณาพิมพ์คำถามครับ", "sources": [], "intent": None, "mode": mode}
@@ -509,9 +552,17 @@ async def answer_question(
             "mode": mode
         }
 
+    # ---------------------------------------------------------
+    # [NEW] STEP 1.5: Query Rewriting (หัวใจของ Stateful Search)
+    # ---------------------------------------------------------
+    search_query = query # ค่าตั้งต้น
+    if history and llm:
+        # ถ้ามีประวัติ ให้ AI ช่วยเกลาคำถามก่อนเอาไปค้น DB
+        search_query = await _rewrite_query_with_history(llm, query, history)
+
     # [NEW] STEP 2: Mode Selection (Deterministic)
     if mode == "auto":
-        q_lower = query.lower()
+        q_lower = search_query.lower() # ใช้ search_query ที่เกลาแล้วในการตัดสินใจ
         if any(x in q_lower for x in ["ตาราง", "table", "ยอด", "สถิติ", "list", "รายการ", "สรุป"]):
             intent = "table"
         else:
@@ -533,39 +584,24 @@ async def answer_question(
 
     try:
         # Layer 1: Strict Search
-        raw_docs = search_similar(query, k=top_k*3, doc_ids=sanitized_doc_ids, sources=sources_filter, doc_types=doc_types)
+        # [IMPORTANT] ใช้ search_query (คำถามที่เกลาแล้ว) ในการค้นหา
+        raw_docs = search_similar(search_query, k=top_k*3, doc_ids=sanitized_doc_ids, sources=sources_filter, doc_types=doc_types)
         
         # [CHANGE] Disabled Layer 2 & 3 to prevent cross-document contamination
         # ถ้า Layer 1 (Strict) ไม่เจอ ก็คือไม่เจอเลย (เพื่อให้ระบบตอบว่า "ไม่พบข้อมูล" แทนที่จะมั่ว)
         
-        # Layer 2: Relaxed ID Search (DISABLED)
-        # if not raw_docs and sanitized_doc_ids:
-        #      logger.warning(f"[rag] Layer 1 empty. Retrying Layer 2 (Global search).")
-        #      raw_docs = search_similar(query, k=top_k*3, doc_ids=None, sources=sources_filter, doc_types=doc_types)
-        
-        # Layer 3: Keyword/Broad Search (DISABLED)
-        # if not raw_docs:
-        #      logger.warning(f"[rag] Layer 2 empty. Retrying Layer 3 (Broad).")
-        #      broad_docs = search_similar(query, k=50, doc_ids=None, sources=sources_filter, doc_types=doc_types)
-        #      
-        #      q_terms = [t for t in query.lower().split() if len(t) > 2]
-        #      if q_terms:
-        #          raw_docs = [d for d in broad_docs if any(t in (d.page_content or "").lower() for t in q_terms)]
-        #          if not raw_docs: raw_docs = broad_docs[:top_k]
-        #      else:
-        #          raw_docs = broad_docs[:top_k]
-
         logger.info(f"[rag] Found {len(raw_docs)} raw docs")
 
-        # Rerank
-        docs = _rerank_documents(query, raw_docs, top_k)
+        # Rerank (ใช้ search_query)
+        docs = _rerank_documents(search_query, raw_docs, top_k)
         
         # [NEW] STEP 4: STRICT FILTERING (No Rescue Mission)
-        relevant_docs = _filter_relevant_docs(query, docs, min_score=MIN_SCORE_THRESHOLD)
+        # ใช้ search_query ในการกรอง
+        relevant_docs = _filter_relevant_docs(search_query, docs, min_score=MIN_SCORE_THRESHOLD)
         
         if not relevant_docs:
             # Check Q&A direct match before giving up
-            qna_match = _find_best_qna_answer_from_docs(query, docs) # Use original docs to find doc_id context
+            qna_match = _find_best_qna_answer_from_docs(search_query, docs) # Use original docs to find doc_id context
             if qna_match:
                 return {
                     "answer": qna_match["answer"],
@@ -688,7 +724,7 @@ async def answer_question(
             "   - เหตุผล: การแสดงเป็นรูปภาพจะอ่านง่ายและถูกต้องเหมือนต้นฉบับที่สุด\n"
             "\n"
             "📋 รูปแบบการตอบ:\n"
-            "1. ตอบคำถามให้ตรงประเด็น\n"
+            "1. ตอบคำถามให้ตรงประเด็น โดยพิจารณาจากทั้ง **History** และ **Context**\n"
             "2. แทรกหลักฐาน (Table/Image) ตาม Logic ข้างบน\n"
             "3. อธิบายข้อมูลในหลักฐานนั้นสั้นๆ\n"
             "\n"
@@ -701,16 +737,36 @@ async def answer_question(
 # -------------------------------------------------------------------
     # 4) Call LLM (Chain of Fallback: OpenRouter -> Google -> Raw)
     # -------------------------------------------------------------------
-    llm = _get_llm_instance(model=_LL_MODEL_FAST)
+    # llm ถูก init ไว้แล้วข้างบน
     
     answer_text = ""
     ai_response = None
+    
+    # [NEW] สร้าง Messages List สำหรับส่งให้ LLM โดยรวม History ด้วย
+    messages = [SystemMessage(content=system_prompt)]
+    
+    # ใส่ History ย้อนหลังเข้าไป (แปลงเป็น LangChain Object)
+    # เอาแค่ 6 ข้อความล่าสุด เพื่อประหยัด Token และไม่ให้ AI สับสนกับเรื่องเก่าเกินไป
+    for h in history[-6:]: 
+        if h.get("role") == "user":
+            messages.append(HumanMessage(content=h.get("content", "")))
+        else:
+            # ใช้ AIMessage แทนการ Hardcode
+            messages.append(AIMessage(content=h.get("content", "")))
+    
+    # ข้อความสุดท้าย (คำถามปัจจุบัน + Context Warning)
+    final_input = (
+        f"คำถามปัจจุบัน: {query}\n\n"
+        f"(หมายเหตุระบบ: Context สำหรับตอบคำถามนี้ถูกค้นหามาด้วย keyword: '{search_query}')"
+    )
+    messages.append(HumanMessage(content=final_input))
     
     # --- 1. แผน A: ลองใช้ Primary LLM (OpenRouter/Qwen) ---
     try:
         if llm:
             # logger.info(f"[rag] 🚀 Trying Primary LLM ({_LL_MODEL_FAST})...")
-            ai_response = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+            # [CHANGE] ส่ง messages (ที่มี history) แทนการส่ง prompt เดี่ยวๆ
+            ai_response = await llm.ainvoke(messages)
             answer_text = getattr(ai_response, "content", str(ai_response))
     except Exception as e:
         logger.warning(f"[rag] ❌ Primary LLM failed: {e}")
@@ -721,8 +777,8 @@ async def answer_question(
             google_llm = _get_google_llm() # เรียกฟังก์ชันที่เราสร้างไว้
             if google_llm:
                 logger.info("[rag] 🔄 Switching to Backup LLM: Google Gemini...")
-                # ใช้ ainvoke เพื่อให้ทำงานแบบ Async ไม่บล็อกระบบ
-                ai_response = await google_llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+                # Backup ก็ควรได้รับ History ด้วย
+                ai_response = await google_llm.ainvoke(messages)
                 answer_text = getattr(ai_response, "content", str(ai_response))
             else:
                 logger.warning("[rag] Google API Key not found, skipping backup.")
