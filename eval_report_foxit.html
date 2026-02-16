@@ -1,0 +1,251 @@
+
+    <!DOCTYPE html>
+    <html lang="th">
+    <head>
+        <meta charset="UTF-8">
+        <title>รายงานผลการทดสอบ RAG (Foxit Manual)</title>
+        <style>
+            body { font-family: 'Sarabun', sans-serif; margin: 20px; background: #f4f6f9; }
+            .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            table { width: 100%; border-collapse: collapse; font-size: 14px; }
+            th, td { padding: 12px; border: 1px solid #ddd; text-align: left; vertical-align: top; }
+            th { background: #2c3e50; color: white; }
+            .score { font-weight: bold; padding: 4px 8px; border-radius: 4px; color: white; display: inline-block; }
+            .s-5, .s-4 { background: #2ecc71; } .s-3 { background: #f1c40f; color: black; } .s-2, .s-1, .s-0 { background: #e74c3c; }
+        </style>
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+    </head>
+    <body>
+        <div class="card" style="text-align: center;">
+            <h2>ผลการทดสอบ: <span style="color:red">0.00%</span> (ปรับปรุง 🔴)</h2>
+            <p>Document: คู่มือการใช้งานโปรแกรม-Foxit-PDF-Editor</p>
+        </div>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th width="10%">ระดับ</th>
+                        <th width="25%">คำถาม</th>
+                        <th width="30%">คำตอบ AI</th>
+                        <th width="10%">คะแนน</th>
+                        <th width="25%">เหตุผล (Judge)</th>
+                    </tr>
+                </thead>
+                <tbody>
+    
+                <tr>
+                    <td><strong>Easy</strong></td>
+                    <td>รูปแบบอีเมล์ของมหาวิทยาลัยที่ใช้กรอกในการติดตั้งคืออะไร<br><br><em>(เฉลย: ชื่อ.นามสกุลตัวแรก@mail.rmutl.ac.th)</em></td>
+                    <td>รูปแบบอีเมล์ของมหาวิทยาลัยที่ใช้ในการติดตั้งคือ:
+
+ชื่อผู้ใช้งาน: **ชื่อ.นามสกุลตัวแรก@mail.rmutl.ac.th**
+
+ตัวอย่าง: ถ้าชื่อคือ "สมชาย วิรัชชัย" รูปแบบอีเมล์จะเป็น **สมชาย.ว@mail.rmutl.ac.th**
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p003_003.png]
+
+**อธิบายรูปภาพ:**
+- รูปภาพแสดงหน้าจอเข้าสู่ระบบ (Sign in) ของ Google ด้วยบัญชี Gmail
+- มีช่องเพื่อกรอก "Email or phone" พร้อมตัวอย่างที่กรอกไว้คือ "rossona.g@mail.rmutk.ac.th"
+- ปุ่ม "Next" สำหรับกดเมื่อกรอกอีเมล์เรียบร้อยแล้ว</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Easy</strong></td>
+                    <td>เริ่มต้นการติดตั้งต้องเข้าไปที่เว็บไซต์ใด<br><br><em>(เฉลย: www.google.com)</em></td>
+                    <td>จากข้อมูลที่มีอยู่ในเอกสาร, ไม่มีการระบุเว็บไซต์เฉพาะสำหรับการเริ่มต้นการติดตั้งโปรแกรม Foxit PDF Editor อย่างชัดเจน แต่หากต้องการเข้าสู่ระบบเพื่อใช้งาน Foxit Cloud, คุณจะต้องเข้าสู่เว็บไซต์ `https://accounts.google.co.th/...` ซึ่งเป็นหน้าเข้าสู่ระบบของ Google ที่ใช้สำหรับยืนยันตัวตนก่อนเข้าสู่ Foxit Cloud.
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p012_016.png]
+
+ในรูปภาพนี้ คุณจะเห็นช่อง URL ที่แสดง `https://accounts.google.co.th/...` ซึ่งเป็นหน้าเข้าสู่ระบบของ Google ที่ใช้สำหรับยืนยันตัวตนผ่านอีเมลหรือเบอร์โทรศัพท์.</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Easy</strong></td>
+                    <td>หัวข้อ 'การเปลี่ยนสีตัวอักษร' อยู่ในหน้าใดของคู่มือ<br><br><em>(เฉลย: หน้า 17)</em></td>
+                    <td>ตามคู่มือการใช้งานโปรแกรม Foxit PDF Editor ที่ให้มา ไม่มีการระบุเฉพาะหน้าที่มีหัวข้อ "การเปลี่ยนสีตัวอักษร" อย่างชัดเจน อย่างไรก็ตาม มีการอ้างอิงถึงการเปลี่ยน Font ตัวอักษรในหน้า 1 ซึ่งอาจเกี่ยวข้องกับการเปลี่ยนสีตัวอักษร
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p003_002.png]
+
+### อธิบายรูปภาพ:
+- **หน้าต่างโปรแกรม Foxit PDF Editor:** แสดงเมนูหลักและเครื่องมือต่างๆ ที่ใช้ในการแก้ไขเอกสาร PDF
+- **ส่วนเมนู Home:** มีปุ่ม "Edit Object" ที่สามารถใช้สำหรับการแก้ไขข้อความ เช่น การเปลี่ยน Font ตัวอักษร
+
+หากต้องการข้อมูลเพิ่มเติมเกี่ยวกับการเปลี่ยนสีตัวอักษร อาจต้องตรวจสอบคู่มือในส่วนที่เกี่ยวข้องกับการแก้ไขข้อความอย่างละเอียดอีกครั้ง</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Easy</strong></td>
+                    <td>หลังจากติดตั้งเสร็จแล้ว ให้คลิกที่ปุ่มใดเพื่อเข้าสู่โปรแกรม<br><br><em>(เฉลย: ปุ่ม Finish หรือ Sign in (เพื่อเริ่มใช้งาน))</em></td>
+                    <td>หลังจากติดตั้งโปรแกรม Foxit PDF Editor เสร็จแล้ว ให้คลิกที่ปุ่ม **"Sign in"** เพื่อเข้าสู่ระบบ
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p010_011.png]
+
+### อธิบายรูปภาพ:
+- **ส่วนบนของภาพ:** แสดงหน้าจอหลักของ **Foxit PDF Editor** พร้อมเมนูทางเลือก (Menu) ที่ให้ใช้งาน เช่น, Home, File, Edit, View เป็นต้น
+- **ส่วนเครื่องมือ (Tool Wizard):** มีปุ่มต่างๆ สำหรับใช้งาน เช่น, Edit PDF, Merge PDF, Move PDF Pages และอื่นๆ
+- **ข้อความที่ระบุ:** "ให้ทำการคลิกที่ปุ่ม ‘Sign in’ เพื่อทำการเข้าสู่ระบบ Foxit PDF Editor"</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Medium</strong></td>
+                    <td>ในขั้นตอนการ Sign in เข้าใช้งานโปรแกรม ต้องเลือกตัวเลือกองค์กรชื่อว่าอะไร<br><br><em>(เฉลย: Thai University Consortium Organization Service)</em></td>
+                    <td>ในการ Sign in เข้าใช้งานโปรแกรม Foxit PDF Editor ไม่มีขั้นตอนที่ต้องเลือกตัวเลือกองค์กรชื่อเฉพาะในข้อมูลที่ให้มา แต่คุณต้องใช้บัญชี Google ของมหาวิทยาลัยเพื่อเข้าสู่ระบบ โดยใช้อีเมล์ในรูปแบบ `ชื่อ.นามสกุลตัวแรก@mail.rmutk.ac.th` ตามขั้นตอนดังนี้:
+
+1. คลิกที่ปุ่ม "Sign in with Google".
+2. กรอกอีเมล์ของมหาวิทยาลัยในช่อง "Email or phone" ตัวอย่าง: `rossona.g@mail.rmutk.ac.th`.
+3. คลิกที่ปุ่ม "Next".
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p003_003.png]
+
+รูปภาพนี้แสดงหน้าจอการ Sign in ของ Google พร้อมช่องกรอกอีเมล์และปุ่ม "Next" ที่คุณต้องใช้ในการเข้าสู่ระบบ Foxit PDF Editor.</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Medium</strong></td>
+                    <td>ก่อนกดปุ่ม Install ต้องทำเครื่องหมายถูกที่หน้าข้อความใด<br><br><em>(เฉลย: I accept the terms in the License Agreement)</em></td>
+                    <td>ก่อนกดปุ่ม Install ต้องทำเครื่องหมายถูกที่หน้าข้อความ "I accept the terms in the License Agreement" ในหน้าต่าง **End-User License Agreement (EULA)**
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p008_008.png]
+
+### อธิบายรูปภาพ:
+- **ชื่อหน้า:** End-User License Agreement
+- **รายละเอียด:** หน้าต่างนี้แสดงข้อความเงื่อนไขการใช้งานซอฟต์แวร์ **Foxit Software Inc.**
+- **ช่องยินยอม:** มีช่องให้ผู้ใช้ทำเครื่องหมายถูกที่ข้อความ "I accept the terms in the License Agreement"
+- **ปุ่ม:** 
+  - **Next** (เลื่อนไปขั้นตอนถัดไป)
+  - **Back** (กลับขึ้น)
+  - **Cancel** (ยกเลิกการติดตั้ง)</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Medium</strong></td>
+                    <td>เมื่อ Browser แจ้งเตือนการเปิดลิงค์ ต้องกดปุ่มใดเพื่อยืนยัน<br><br><em>(เฉลย: ปุ่ม 'เปิดลิงค์' (Open Link))</em></td>
+                    <td>เมื่อ Browser แจ้งเตือนการเปิดลิงค์ คุณต้องกดปุ่ม "เปิดลิงก์" เพื่อยืนยันการเข้าถึงบริการ **Foxit PDF Editor** ผ่านเว็บไซต์ **https://foxitpdfeditorgdlogin.foxitcloud.com** 
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p012_015.png]
+
+### ข้อความสำคัญ:
+- **ตัวเลือกยืนยันลิงก์:**
+  - **ตัวเลือกแรก:** "ยอมยินดีให้ [ลิงก์] เปิดลิงก์ foxitpdfeditor เสมอ"
+  - **ตัวเลือกที่ 2:** ปุ่ม "เปิดลิงก์" เพื่อทำตามการยืนยัน</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Hard</strong></td>
+                    <td>อธิบายขั้นตอนการดาวน์โหลดโปรแกรม Foxit PDF Editor หลังจาก Login อีเมล์แล้ว<br><br><em>(เฉลย: เปิดอีเมล์จาก Foxit Software -> เลือกระบบปฏิบัติการ (เช่น Windows) -> คลิกปุ่ม Downloads -> เลือกไฟล์ติดตั้ง)</em></td>
+                    <td>### ขั้นตอนการดาวน์โหลดโปรแกรม Foxit PDF Editor หลังจาก Login อีเมล์แล้ว
+
+หลังจากที่คุณได้ทำการเข้าสู่ระบบ (Login) ด้วยอีเมล์ของมหาวิทยาลัยเรียบร้อยแล้ว คุณสามารถดำเนินการดาวน์โหลดโปรแกรม Foxit PDF Editor ตามขั้นตอนต่อไปนี้:
+
+1. **คลิกปุ่ม "Downloads"**:
+   - หลังจากเข้าสู่ระบบแล้ว ให้คุณคลิกที่ปุ่ม "Downloads" ที่อยู่มุมขวาบนของหน้าจอ
+
+2. **เลือกโปรแกรม Foxit PDF Editor**:
+   - ในหน้า Downloads ให้คุณเลือกโปรแกรม Foxit PDF Editor ที่ต้องการดาวน์โหลด
+
+3. **คลิกปุ่ม "Next"**:
+   - หลังจากเลือกโปรแกรมแล้ว ให้คลิกที่ปุ่ม "Next" เพื่อดำเนินการต่อ
+
+4. **ยอมรับข้อตกลงการใช้งาน**:
+   - หน้าจอจะแสดงข้อตกลงการใช้งาน (License Agreement) ให้คุณคลิกเครื่องหมายถูกหน้าหัวข้อ "I accept the terms in the License Agreement" แล้วคลิกที่ปุ่ม "Next"
+
+5. **คลิกปุ่ม "Install"**:
+   - หลังจากยอมรับข้อตกลงการใช้งานแล้ว ให้คลิกที่ปุ่ม "Install" เพื่อเริ่มต้นการติดตั้งโปรแกรม
+
+6. **รอการติดตั้ง**:
+   - โปรแกรมจะทำการติดตั้งโดยอัตโนมัติ ให้คุณรอจนกว่าการติดตั้งจะเสร็จสมบูรณ์
+
+7. **คลิกปุ่ม "Finish"**:
+   - หลังจากที่การติดตั้งโปรแกรมเสร็จสมบูรณ์ ให้คลิกที่ปุ่ม "Finish" เพื่อปิดหน้าจอการติดตั้ง
+
+### ภาพประกอบ
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p012_015.png]
+
+ภาพนี้แสดงขั้นตอนการยืนยันลิงก์เพื่อเข้าถึงบริการ Foxit PDF Editor ผ่านเว็บไซต์ **https://foxitpdfeditorgdlogin.foxitcloud.com** ซึ่งเป็นขั้นตอนที่เกิดขึ้นหลังจากที่คุณทำการเข้าสู่ระบบ (Login) ด้วยอีเมล์ของมหาวิทยาลัยแล้ว
+
+### ข้อความสำคัญ
+- **ข้อความในกล่องโต้ตอบ:** "ยอมยินดีให้ [ลิงก์] เปิดลิงก์ foxitpdfeditor เสมอ"
+- **ตัวเลือกยืนยันลิงก์:**
+  - **ตัวเลือกแรก:** เป็นตัวเลือกยืนยัน (มีเครื่องหมายถูก) ระบุว่า "ยอมยินดีให้ [ลิงก์] เปิดลิงก์ foxitpdfeditor เสมอ"
+  - **ตัวเลือกที่ 2:** เป็นปุ่ม "เปิดลิงก์" เพื่อทำตามการยืนยัน
+
+ด้วยขั้นตอนเหล่านี้ คุณจะสามารถดาวน์โหลดและติดตั้งโปรแกรม Foxit PDF Editor ได้อย่างถูกต้องและสมบูรณ์</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Hard</strong></td>
+                    <td>หากต้องการแก้ไขข้อความในไฟล์ PDF ต้องทำอย่างไรตามสารบัญ<br><br><em>(เฉลย: ดูวิธีการในหน้า 12 (การแก้ไขข้อความ))</em></td>
+                    <td>ตามคู่มือการใช้งานโปรแกรม Foxit PDF Editor, การแก้ไขข้อความในไฟล์ PDF สามารถทำได้ตามขั้นตอนดังนี้:
+
+1. **เปิดโปรแกรม Foxit PDF Editor**:
+   - คลิกที่ปุ่ม "Open File" เพื่อเปิดไฟล์ PDF ที่ต้องการแก้ไข
+
+2. **ไปที่แท็บ "Home"**:
+   - คลิกที่แท็บ "Home" ที่อยู่บนสุดของโปรแกรม
+
+3. **เลือกเครื่องมือ "Edit Object"**:
+   - ในแท็บ "Home", คลิกที่ปุ่ม "Edit Object"
+   - จากนั้นคลิกที่ปุ่ม "Text" เพื่อเลือกการแก้ไขข้อความ
+
+4. **เลือกข้อความที่ต้องการแก้ไข**:
+   - ใช้เมาส์คลิกและลากเพื่อเลือกข้อความที่ต้องการแก้ไข
+
+5. **แก้ไขข้อความ**:
+   - พิมพ์ข้อความใหม่ที่ต้องการแก้ไข
+
+6. **บันทึกไฟล์**:
+   - หลังจากแก้ไขเสร็จเรียบร้อยแล้ว ให้คลิกที่เมนู "File" และเลือก "Save" หรือ "Save As" เพื่อบันทึกไฟล์
+
+### ภาพประกอบ
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p015_024.png]
+
+### คำอธิบายภาพ
+- **แท็บ "Home"**: แสดงว่าอยู่ที่แท็บเริ่มต้นของโปรแกรม
+- **พื้นที่เมนู**: มีเมนูหลายอย่าง เช่น File, Convert, Edit, Organize, Comment, View, Form, Protect, และ Foxit eSign
+- **ปุ่ม "Edit Object"**: เป็นปุ่มสำหรับการแก้ไขส่วนต่างๆ ในไฟล์ PDF (Text, Image, Shape, Shading)
+- **ข้อความคำแนะนำ**: มีข้อความคำแนะนำที่ระบุขั้นตอนที่จำเป็นในการแก้ไขข้อความ (Text) ในไฟล์ PDF</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        
+                <tr>
+                    <td><strong>Hard</strong></td>
+                    <td>ถ้าติดตั้งบนระบบปฏิบัติการ Windows ต้องเลือกดาวน์โหลดเวอร์ชันใด<br><br><em>(เฉลย: Foxit PDF Editor Pro Windows)</em></td>
+                    <td>สำหรับการติดตั้ง Foxit PDF Editor บนระบบปฏิบัติการ Windows คุณต้องเลือกดาวน์โหลดเวอร์ชัน **Foxit PDF Editor Pro Windows** ตามที่ระบุในคู่มือการใช้งาน:
+
+[SHOW_IMAGE: ingested/คู่มือการใช้งานโปรแกรม-foxit-pdf-editor/images/img_p008_008.png]
+
+### อธิบายข้อมูลในรูปภาพ:
+- **หน้าต่าง End-User License Agreement (EULA):**
+  - ชื่อหน้า: **End-User License Agreement**
+  - เป็นข้อความที่ระบุเงื่อนไขการใช้งานซอฟต์แวร์ **Foxit Software Inc.**
+  - มีช่องให้ผู้ใช้ยินยอมเงื่อนไข (Checkbox):
+    - "I accept the terms in the License Agreement"
+    - "Help improve user experience"
+  - ตัวเลือกปุ่ม:
+    - **Next** (เลื่อนไปขั้นตอนถัดไป)
+    - **Back** (กลับขึ้น)
+    - **Cancel** (ยกเลิกการติดตั้ง)
+
+หลังจากยินยอมกับเงื่อนไขการใช้งานแล้ว คุณจะสามารถเลือกเวอร์ชันที่เหมาะสมกับระบบปฏิบัติการของคุณ ซึ่งในกรณีของ Windows คือ **Foxit PDF Editor Pro Windows**.</td>
+                    <td><span class="score s-0">0</span></td>
+                    <td style="color:gray;">All Judges Failed</td>
+                </tr>
+        </tbody></table></div></body></html>
