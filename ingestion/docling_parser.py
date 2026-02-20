@@ -1,21 +1,27 @@
 # ingestion/docling_parser.py
 
+import os
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple, Any, Dict
+from typing import List, Tuple, Dict, Any
 from datetime import datetime
-import os
 
-import pandas as pd
 import cv2
 import numpy as np
 from PIL import Image
 
-# Docling Imports
-from docling.document_converter import DocumentConverter, PdfFormatOption
+# Docling
+from docling.document_converter import (
+    DocumentConverter,
+    PdfFormatOption,
+)
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions,
+    TableStructureOptions,
+)
 
+# Project Schema
 from .schema import (
     IngestedDocument,
     TableBlock,
@@ -23,6 +29,7 @@ from .schema import (
     DocumentMetadata,
     ImageBlock,
 )
+
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +50,8 @@ class DoclingParser:
         )
         pipeline_options.generate_page_images = True
         pipeline_options.images_scale = 3.0
+        self.image_scale = 3.0
+
 
         self.converter = DocumentConverter(
             format_options={
@@ -58,6 +67,7 @@ class DoclingParser:
 
             page_images = {}
             for page_no, page in doc.pages.items():
+                # 1. ลองดึงจาก Property ที่มีอยู่ก่อน
                 if hasattr(page, "image") and page.image:
                     if hasattr(page.image, "pil_image"):
                         page_images[page_no] = page.image.pil_image
@@ -65,6 +75,14 @@ class DoclingParser:
                         page_images[page_no] = page.image.image
                     else:
                         page_images[page_no] = page.image
+                
+                # 2. [ส่วนที่เพิ่ม] ถ้าหาไม่เจอ ให้บังคับสร้างรูปใหม่ทันที (แก้ปัญหาตารางไม่มีรูป)
+                else:
+                    try:
+                        # บังคับ Gen รูป Scale 3.0 (ชัดเท่าต้นฉบับ)
+                        page_images[page_no] = page.get_image(scale=3.0)
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not force generate image for page {page_no}: {e}")
 
             doc_id = Path(file_path).stem
 
@@ -120,143 +138,176 @@ class DoclingParser:
                     )
                 )
         return blocks
-    
-    def _refine_table_crop(self, region: Image.Image) -> Image.Image:
-   
-        img_np = np.array(region)
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+#-------------------------------------------------------------------#
+    def _detect_table_regions(self, pil_image):
+        #Detect all possible table regions from a page.
+        #Returns list of (x0,y0,x1,y1)
 
-        # Adaptive threshold (robust for forms)
+        img = np.array(pil_image)
+
+        # FIX RGB conversion
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+        gray = cv2.equalizeHist(gray)
+
         thresh = cv2.adaptiveThreshold(
-            gray, 255,
+            gray,
+            255,
             cv2.ADAPTIVE_THRESH_MEAN_C,
-            cv2.THRESH_BINARY_INV,
-            15, 5
+             cv2.THRESH_BINARY_INV,
+            15,
+            5,
         )
 
-        h, w = thresh.shape
+        h, w = gray.shape
 
-        # Dynamic kernel size
-        horizontal_kernel_len = max(20, w // 25)
-        vertical_kernel_len = max(20, h // 25)
+        # Dynamic kernel
+        horizontal_len = max(40, w // 25)
+        vertical_len = max(40, h // 25)
 
         horizontal_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (horizontal_kernel_len, 1)
+            cv2.MORPH_RECT, (horizontal_len, 1)
         )
         vertical_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (1, vertical_kernel_len)
+            cv2.MORPH_RECT, (1, vertical_len)
         )
 
-        horizontal_lines = cv2.morphologyEx(
-            thresh, cv2.MORPH_OPEN, horizontal_kernel
-        )
+        horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel)
+        vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel)
 
-        vertical_lines = cv2.morphologyEx(
-            thresh, cv2.MORPH_OPEN, vertical_kernel
-        )
+        table_mask = cv2.add(horizontal, vertical)
 
-        table_mask = cv2.add(horizontal_lines, vertical_lines)
+        kernel = np.ones((5, 5), np.uint8)
+        table_mask = cv2.dilate(table_mask, kernel, iterations=2)
 
         contours, _ = cv2.findContours(
-            table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            table_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
         )
 
-        if not contours:
-            return region  # fallback
-
-        # Filter small contours
-        valid_contours = []
-        min_area = (w * h) * 0.05
+        regions = []
 
         for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > min_area:
-                valid_contours.append(cnt)
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            area = cw * ch
 
-        if not valid_contours:
-            return region
+            if cw > 200 and ch > 80 and area > (w * h * 0.01):
+                regions.append((x, y, x + cw, y + ch))
 
-        largest = max(valid_contours, key=cv2.contourArea)
-        x, y, cw, ch = cv2.boundingRect(largest)
+        return regions
 
-        # Safety clamp
-        x_end = min(w, x + cw)
-        y_end = min(h, y + ch)
+# -------------------------------------------------------------------#
 
-        refined = img_np[y:y_end, x:x_end]
+    def _match_best_region(self, regions, docling_bbox):
 
-        if refined.size == 0:
-            return region
+        if not regions:
+            return None
 
-        return Image.fromarray(refined)
+        if not docling_bbox:
+            return regions[0]
 
+        dx0, dy0, dx1, dy1 = docling_bbox
 
+        best_score = 0
+        best_region = None
+
+        for (x0, y0, x1, y1) in regions:
+
+            inter_x0 = max(x0, dx0)
+            inter_y0 = max(y0, dy0)
+            inter_x1 = min(x1, dx1)
+            inter_y1 = min(y1, dy1)
+
+            if inter_x1 <= inter_x0 or inter_y1 <= inter_y0:
+                continue
+
+            inter_area = (inter_x1 - inter_x0) * (inter_y1 - inter_y0)
+            box_area = (x1 - x0) * (y1 - y0)
+
+            score = inter_area / float(box_area)
+
+            if score > best_score:
+                best_score = score
+                best_region = (x0, y0, x1, y1)
+
+        return best_region
+# -------------------------------------------------------------------
+    # แก้ไข: Table Cropping Logic (Smart Expansion) - ไม่ใช้ OpenCV แล้ว
+    # -------------------------------------------------------------------
     def _process_tables(
-        self, doc, page_images: dict, doc_id: str, output_dir: str
+        self,
+        doc,
+        page_images: dict,
+        doc_id: str,
+        output_dir: str,
     ) -> Tuple[List[TableBlock], List[ImageBlock]]:
 
         blocks = []
         img_blocks = []
 
+        # เตรียม Folder
         img_output_dir = os.path.join(output_dir, "images")
         os.makedirs(img_output_dir, exist_ok=True)
 
-        SCALE = 3.0  # must match pipeline_options.images_scale
+        # ใช้ Scale จาก config หรือ default เป็น 3.0
+        SCALE = getattr(self, "image_scale", 3.0)
 
         for i, table in enumerate(doc.tables):
-
+            # 1. ดึงข้อมูล Text/Markdown
             df = table.export_to_dataframe(doc)
             md = table.export_to_markdown(doc)
 
             saved_image_path = None
             page_no = table.prov[0].page_no if table.prov else 1
-            bbox_tuple = table.prov[0].bbox.as_tuple() if table.prov else None
+            bbox_tuple = (
+                table.prov[0].bbox.as_tuple() if table.prov else None
+            )
 
+            # 2. เริ่มกระบวนการตัดภาพ (Logic ใหม่: ไม่พึ่ง OpenCV)
             try:
                 page_img = page_images.get(page_no)
-
-                if page_img and table.prov and table.prov[0].bbox:
-
+                
+                # ตัดภาพเฉพาะเมื่อมีรูป และ มีพิกัดตาราง
+                if page_img and table.prov:
+                    
                     bbox = table.prov[0].bbox
-
                     img_w, img_h = page_img.size
 
-                    # Scale bbox
-                    l = bbox.l * SCALE
-                    t = bbox.t * SCALE
-                    r = bbox.r * SCALE
-                    b = bbox.b * SCALE
+                    # [CORE FIX] ใช้พิกัดจาก Docling โดยตรง + ขยายขอบ (Padding)
+                    import math
+                    l = math.floor(bbox.l * SCALE)
+                    t = math.floor(bbox.t * SCALE)
+                    r = math.ceil(bbox.r * SCALE)
+                    b = math.ceil(bbox.b * SCALE)
 
-                    x0 = min(l, r)
-                    y0 = min(t, b)
-                    x1 = max(l, r)
-                    y1 = max(t, b)
+                    # [Smart Padding] ขยายขอบให้กว้างขึ้น กันตกหล่น
+                    pad_left = 30
+                    pad_right = 30
+                    pad_top = 50    # เผื่อ Header
+                    pad_bottom = 30 # เผื่อล่าง
 
-                    # Aggressive padding (8%)
-                    pad_ratio = 0.08
-                    pad_x = int((x1 - x0) * pad_ratio)
-                    pad_y = int((y1 - y0) * pad_ratio)
+                    # คำนวณพิกัดใหม่พร้อม Clamp ไม่ให้หลุดขอบรูป
+                    x0 = max(0, int(l - pad_left))
+                    y0 = max(0, int(t - pad_top))
+                    x1 = min(img_w, int(r + pad_right))
+                    y1 = min(img_h, int(b + pad_bottom))
 
-                    final_x0 = max(0, int(x0 - pad_x))
-                    final_y0 = max(0, int(y0 - pad_y))
-                    final_x1 = min(img_w, int(x1 + pad_x))
-                    final_y1 = min(img_h, int(y1 + pad_y))
+                    # ตรวจสอบความถูกต้องของพิกัด
+                    if (x1 > x0) and (y1 > y0):
+                        
+                        # สั่ง Crop
+                        table_img = page_img.crop((x0, y0, x1, y1))
 
-                    if (final_x1 - final_x0) > 50 and (final_y1 - final_y0) > 30:
-
-                        initial_crop = page_img.crop(
-                            (final_x0, final_y0, final_x1, final_y1)
-                        )
-
-                        # 🔥 refine using OpenCV
-                        table_img = self._refine_table_crop(initial_crop)
-
+                        # Save File
                         filename = f"table_p{page_no:03d}_{i:03d}.png"
                         full_save_path = os.path.join(img_output_dir, filename)
                         table_img.save(full_save_path)
 
+                        # Path สำหรับ Frontend (Relative)
                         saved_image_path = f"images/{filename}"
 
+                        # สร้าง ImageBlock (เพื่อให้ระบบมองเป็นรูปภาพ)
                         img_blk = ImageBlock(
                             id=f"img_tbl_{i}",
                             doc_id=doc_id,
@@ -266,14 +317,16 @@ class DoclingParser:
                             bbox=bbox_tuple,
                             section="table",
                             category="table_image",
-                            extra={"source": "docling_table"},
+                            extra={
+                                "source": "docling_smart_crop",
+                            },
                         )
-
                         img_blocks.append(img_blk)
 
             except Exception as e:
-                logger.warning(f"[DoclingParser] Table crop failed: {e}")
+                logger.warning(f"[TABLE CROP ERROR] Table {i} on page {page_no}: {e}")
 
+            # 3. สร้าง TableBlock เสมอ (เก็บ Text ไว้ค้นหา)
             blocks.append(
                 TableBlock(
                     id=f"TBL_{i}",
@@ -291,7 +344,6 @@ class DoclingParser:
             )
 
         return blocks, img_blocks
-
 # -------------------------------------------------------------------
 # IMAGE PARSER (General Image Extractor)
 # -------------------------------------------------------------------
