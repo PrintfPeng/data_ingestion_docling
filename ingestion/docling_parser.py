@@ -34,7 +34,6 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-
 # -------------------------------------------------------------------
 # MAIN PARSER (Table Extractor)
 # -------------------------------------------------------------------
@@ -52,7 +51,6 @@ class DoclingParser:
         pipeline_options.images_scale = 3.0
         self.image_scale = 3.0
 
-
         self.converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
@@ -67,22 +65,26 @@ class DoclingParser:
 
             page_images = {}
             for page_no, page in doc.pages.items():
-                # 1. ลองดึงจาก Property ที่มีอยู่ก่อน
+                # พยายามดึงรูปภาพจาก Property ต่างๆ
+                img = None
                 if hasattr(page, "image") and page.image:
                     if hasattr(page.image, "pil_image"):
-                        page_images[page_no] = page.image.pil_image
+                        img = page.image.pil_image
                     elif hasattr(page.image, "image"):
-                        page_images[page_no] = page.image.image
+                        img = page.image.image
                     else:
-                        page_images[page_no] = page.image
+                        img = page.image
                 
-                # 2. [ส่วนที่เพิ่ม] ถ้าหาไม่เจอ ให้บังคับสร้างรูปใหม่ทันที (แก้ปัญหาตารางไม่มีรูป)
-                else:
+                # ถ้าหาไม่เจอ หรือเป็น None ให้บังคับสร้างใหม่ (Force Render)
+                if img is None:
                     try:
-                        # บังคับ Gen รูป Scale 3.0 (ชัดเท่าต้นฉบับ)
-                        page_images[page_no] = page.get_image(scale=3.0)
+                        # บังคับ Render ที่ Scale 3.0
+                        img = page.get_image(scale=3.0)
                     except Exception as e:
-                        print(f"⚠️ Warning: Could not force generate image for page {page_no}: {e}")
+                        logger.warning(f"Could not render image for page {page_no}: {e}")
+
+                if img:
+                    page_images[page_no] = img
 
             doc_id = Path(file_path).stem
 
@@ -232,7 +234,8 @@ class DoclingParser:
                 best_region = (x0, y0, x1, y1)
 
         return best_region
-# -------------------------------------------------------------------
+
+    # -------------------------------------------------------------------
     # แก้ไข: Table Cropping Logic (Smart Expansion) - ไม่ใช้ OpenCV แล้ว
     # -------------------------------------------------------------------
     def _process_tables(
@@ -246,87 +249,53 @@ class DoclingParser:
         blocks = []
         img_blocks = []
 
-        # เตรียม Folder
+        # สร้างโฟลเดอร์ images
         img_output_dir = os.path.join(output_dir, "images")
         os.makedirs(img_output_dir, exist_ok=True)
 
-        # ใช้ Scale จาก config หรือ default เป็น 3.0
-        SCALE = getattr(self, "image_scale", 3.0)
-
         for i, table in enumerate(doc.tables):
-            # 1. ดึงข้อมูล Text/Markdown
             df = table.export_to_dataframe(doc)
             md = table.export_to_markdown(doc)
 
             saved_image_path = None
             page_no = table.prov[0].page_no if table.prov else 1
-            bbox_tuple = (
-                table.prov[0].bbox.as_tuple() if table.prov else None
-            )
+            bbox_tuple = table.prov[0].bbox.as_tuple() if table.prov else None
 
-            # 2. เริ่มกระบวนการตัดภาพ (Logic ใหม่: ไม่พึ่ง OpenCV)
+            # [FIXED] สร้าง Caption จากเนื้อหาตาราง (Markdown)
+            # ตัดให้เหลือแค่ 300 ตัวอักษรพอสังเขป เพื่อให้ AI เข้าใจบริบทตาราง
+            table_content_preview = md[:300].replace("\n", " ")
+            table_caption = f"Table {i+1}: {table_content_preview}..."
+
+            # [THE REAL FIX] เลิกคำนวณพิกัดตัดรูปเอง ใช้คำสั่ง Native ของ Docling ดึงรูปตารางออกมาเลย
             try:
-                page_img = page_images.get(page_no)
-                
-                # ตัดภาพเฉพาะเมื่อมีรูป และ มีพิกัดตาราง
-                if page_img and table.prov:
+                img_obj = table.get_image(doc)
+                if img_obj:
+                    filename = f"table_p{page_no:03d}_{i:03d}.png"
+                    full_path = os.path.join(img_output_dir, filename)
                     
-                    bbox = table.prov[0].bbox
-                    img_w, img_h = page_img.size
+                    # เซฟรูปลงโฟลเดอร์
+                    img_obj.save(full_path, "PNG")
+                    saved_image_path = f"images/{filename}"
 
-                    # [CORE FIX] ใช้พิกัดจาก Docling โดยตรง + ขยายขอบ (Padding)
-                    import math
-                    l = math.floor(bbox.l * SCALE)
-                    t = math.floor(bbox.t * SCALE)
-                    r = math.ceil(bbox.r * SCALE)
-                    b = math.ceil(bbox.b * SCALE)
-
-                    # [Smart Padding] ขยายขอบให้กว้างขึ้น กันตกหล่น
-                    pad_left = 30
-                    pad_right = 30
-                    pad_top = 50    # เผื่อ Header
-                    pad_bottom = 30 # เผื่อล่าง
-
-                    # คำนวณพิกัดใหม่พร้อม Clamp ไม่ให้หลุดขอบรูป
-                    x0 = max(0, int(l - pad_left))
-                    y0 = max(0, int(t - pad_top))
-                    x1 = min(img_w, int(r + pad_right))
-                    y1 = min(img_h, int(b + pad_bottom))
-
-                    # ตรวจสอบความถูกต้องของพิกัด
-                    if (x1 > x0) and (y1 > y0):
-                        
-                        # สั่ง Crop
-                        table_img = page_img.crop((x0, y0, x1, y1))
-
-                        # Save File
-                        filename = f"table_p{page_no:03d}_{i:03d}.png"
-                        full_save_path = os.path.join(img_output_dir, filename)
-                        table_img.save(full_save_path)
-
-                        # Path สำหรับ Frontend (Relative)
-                        saved_image_path = f"images/{filename}"
-
-                        # สร้าง ImageBlock (เพื่อให้ระบบมองเป็นรูปภาพ)
-                        img_blk = ImageBlock(
-                            id=f"img_tbl_{i}",
-                            doc_id=doc_id,
-                            page=page_no,
-                            file_path=saved_image_path,
-                            caption=f"Table {i+1} extracted from page {page_no}",
-                            bbox=bbox_tuple,
-                            section="table",
-                            category="table_image",
-                            extra={
-                                "source": "docling_smart_crop",
-                            },
-                        )
-                        img_blocks.append(img_blk)
-
+                    # สร้าง ImageBlock
+                    img_blocks.append(ImageBlock(
+                        id=f"img_tbl_{i}",
+                        doc_id=doc_id,
+                        page=page_no,
+                        file_path=saved_image_path,
+                        caption=table_caption, # [FIXED] ใส่เนื้อหาตารางลงไปใน Caption
+                        bbox=bbox_tuple,
+                        section="table",
+                        category="table_image",
+                        extra={
+                            "source": "docling_native",
+                            "markdown": md # เก็บ Markdown ไว้ใน extra ด้วยเผื่อใช้
+                        }
+                    ))
             except Exception as e:
-                logger.warning(f"[TABLE CROP ERROR] Table {i} on page {page_no}: {e}")
+                logger.warning(f"Failed to extract table image natively: {e}")
 
-            # 3. สร้าง TableBlock เสมอ (เก็บ Text ไว้ค้นหา)
+            # สร้าง TableBlock เสมอ
             blocks.append(
                 TableBlock(
                     id=f"TBL_{i}",
@@ -344,6 +313,7 @@ class DoclingParser:
             )
 
         return blocks, img_blocks
+
 # -------------------------------------------------------------------
 # IMAGE PARSER (General Image Extractor)
 # -------------------------------------------------------------------
@@ -404,7 +374,7 @@ class DoclingImageParser:
                         saved_images.append(
                             {
                                 "index": i,
-                                "file_path": rel_path,  # <--- แก้ตรงนี้ครับ! ส่ง Path สั้นไป
+                                "file_path": rel_path,  # ส่ง Path สั้นไป
                                 "file_name": image_filename,
                                 "page": page_no,
                                 "bbox": bbox,

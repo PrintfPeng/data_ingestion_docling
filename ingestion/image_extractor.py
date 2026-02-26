@@ -44,7 +44,12 @@ def _get_openai_client() -> tuple[Optional[OpenAI], Optional[str]]:
     """เตรียม OpenAI Client (OpenRouter)"""
     api_key = os.getenv("CUSTOM_API_KEY")
     base_url = os.getenv("CUSTOM_API_BASE")
-    if not api_key: return None, None
+    
+    if not api_key:
+        # [DEBUG] แจ้งเตือนถ้าไม่มี Key
+        # print("   ⚠️ [Config] CUSTOM_API_KEY not found. Plan A disabled.") 
+        return None, None
+        
     try:
         client = OpenAI(api_key=api_key, base_url=base_url)
         return client, VISION_MODEL_NAME
@@ -54,17 +59,28 @@ def _get_google_client():
     """เตรียม Google Gemini Client"""
     if not HAS_GOOGLE: return None
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key: return None
+    
+    if not api_key:
+        # [DEBUG] แจ้งเตือนถ้าไม่มี Key
+        # print("   ⚠️ [Config] GOOGLE_API_KEY not found. Plan B disabled.")
+        return None
+        
     try:
         genai.configure(api_key=api_key)
         # ใช้โมเดล Flash เพราะฟรีและเร็ว
-        return genai.GenerativeModel('gemini-2.5-flash')
+        return genai.GenerativeModel('gemini-2.0-flash')
     except: return None
 
 def _encode_image(image_path: Path) -> str:
     """แปลงไฟล์รูปเป็น Base64"""
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
+    try:
+        # [FIX] ใช้ Absolute Path เสมอ เพื่อป้องกัน Error หาไฟล์ไม่เจอ
+        abs_path = image_path.resolve()
+        with open(abs_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+    except Exception as e:
+        print(f"   ❌ Error encoding image {image_path}: {e}")
+        return ""
 
 # -------------------------------------------------------------------
 # Logic: Generate Caption (Hybrid Fallback System)
@@ -77,6 +93,12 @@ def _generate_caption_hybrid(image_path: Path) -> str:
     2. Google Gemini     -> ถ้าได้ พัก 2 วิ
     3. Empty String      -> (Local Fallback)
     """
+    
+    # [FIX] ตรวจสอบไฟล์ก่อนส่ง AI
+    if not image_path.exists():
+        print(f"   ❌ Image file missing: {image_path}")
+        return ""
+
     prompt = (
         "อธิบายรูปภาพนี้โดยละเอียด: "
         "1. ถ้าเป็นกราฟ/แผนภูมิ ให้บอกชื่อแกน ตัวเลขสำคัญ และแนวโน้ม "
@@ -91,26 +113,26 @@ def _generate_caption_hybrid(image_path: Path) -> str:
         try:
             # print(f"   [AI] Trying Plan A: {model_name}...")
             base64_image = _encode_image(image_path)
-            response = openai_client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
-                        ],
-                    }
-                ],
-                max_tokens=300,
-                timeout=60
-            )
-            caption = response.choices[0].message.content.strip()
-            
-            # [LOGIC] ถ้าใช้ OpenRouter สำเร็จ ให้พักยาว (15s) ตามกฎ Rate Limit
-            print("   💤 Cooling down Plan A (15s)...")
-            time.sleep(15)
-            return caption
+            if base64_image:
+                response = openai_client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
+                            ],
+                        }
+                    ],
+                    max_tokens=300,
+                    timeout=60
+                )
+                caption = response.choices[0].message.content.strip()
+                
+                print("   💤 Cooling down Plan A (15s)...")
+                time.sleep(15)
+                return caption
             
         except Exception as e:
             print(f"   ⚠️ Plan A (OpenRouter) failed: {e}")
@@ -134,7 +156,6 @@ def _generate_caption_hybrid(image_path: Path) -> str:
     # --- PLAN C: Local (ยอมแพ้) ---
     print("   [AI] ❌ All AI failed. Skipping caption.")
     return ""
-
 # -------------------------------------------------------------------
 # Main Extraction
 # -------------------------------------------------------------------
@@ -165,12 +186,15 @@ def extract_images(
 
     # 2. วนลูปรูปที่ได้
     for i, item in enumerate(extracted_data):
-        file_path_on_disk = Path(item["file_path"])
-        file_name = item["file_name"] # รับ key ใหม่
+        # [FIX] ใช้ resolve() เพื่อให้มั่นใจว่าเป็น Absolute Path ก่อนส่งให้ AI
+        file_path_on_disk = Path(item["file_path"]).resolve()
+        file_name = item["file_name"] 
         
-        img_id = f"img_{doc_id}_{i+1:04d}"
+        img_id = f"img_{doc_id}_{item['index']+1:04d}"
         
-        print(f"[image_extractor] Generating caption for {file_name}...") # แก้ print
+        print(f"[image_extractor] Generating caption for {file_name}...")
+        
+        # ส่ง Path เต็มไปให้ฟังก์ชันสร้าง Caption
         caption_text = _generate_caption_hybrid(file_path_on_disk)
         
         # สร้าง Object ImageBlock
@@ -178,14 +202,15 @@ def extract_images(
             id=img_id,
             doc_id=doc_id,
             page=item["page"],
-            file_path=str(file_path_on_disk),
+            # เก็บ Path เป็น Relative เหมือนเดิมเพื่อให้ Frontend ใช้ง่าย
+            file_path=item["file_path"], 
             caption=caption_text, 
             section=None,
             category="figure",
             bbox=item["bbox"],
             extra={
                 "source": "docling",
-                "original_file_name": file_name, # แก้ key ใน extra ให้สอดคล้อง
+                "original_file_name": file_name,
                 "ai_captioned": bool(caption_text),
                 "ai_model": "hybrid"
             },
@@ -221,5 +246,3 @@ if __name__ == "__main__":
     )
 
     print(f"Extracted {len(images)} images.")
-    # data = [im.to_dict() for im in images] # ImageBlock might not have to_dict directly depending on schema
-    # print(json.dumps(data, ensure_ascii=False, indent=2))

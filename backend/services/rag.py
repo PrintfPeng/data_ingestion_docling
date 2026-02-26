@@ -618,17 +618,22 @@ async def answer_question(
                 # เก็บ ID จริงไว้ใช้กับ Fail-safe
                 found_table_ids.append(table_ref_id)
                 
-                # 1. ดึง HTML มาเก็บใน Map (สำหรับแสดงผลหน้าเว็บ)
-                raw_html = md.get("html_content", "")
-                safe_html = _sanitize_html_content(raw_html)
-                if not safe_html:
-                    # Fallback ถ้าไม่มี HTML ให้แสดง Markdown ในกล่องแทน
-                    safe_html = f"<pre class='text-xs overflow-auto p-2 bg-gray-100'>{md.get('markdown_content', 'No content')}</pre>"
+                # --- [MAGIC FIX] ซ่อนรูปตารางไว้ใน Backend ---
+                image_path = md.get("image_path")
+                if image_path:
+                    # ถ้ามีรูปตาราง ให้สร้าง Tag <img> ยัดใส่ table_map รอไว้เลย
+                    clean_image_path = str(image_path).replace("\\", "/")
+                    img_url = f"/ingested/{doc_id}/{clean_image_path}"
+                    table_map[table_ref_id] = f"<img src='{img_url}' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' />"
+                else:
+                    # ถ้าตารางไหนไม่มีรูป ค่อยใช้ HTML/Markdown Fallback
+                    raw_html = md.get("html_content", "")
+                    safe_html = _sanitize_html_content(raw_html)
+                    if not safe_html:
+                        safe_html = f"<pre class='text-xs overflow-auto p-2 bg-gray-100'>{md.get('markdown_content', 'No content')}</pre>"
+                    table_map[table_ref_id] = safe_html
                 
-                table_map[table_ref_id] = safe_html
-                
-                # 2. [CRITICAL FIX] แปะป้ายบอก AI ชัดๆ ว่าตารางนี้คือรหัสอะไร
-                # AI จะได้รู้ว่า Markdown ข้างล่างนี้ คือ TBL_1
+                # บังคับ AI ให้ตอบแค่ Code สั้นๆ จะได้ไม่มั่ว Path
                 chunk_header += f" | **TYPE: TABLE (Code: [SHOW_TABLE:TBL_{table_ref_id}])**"
                 
                 # Mapping category/role (เหมือนเดิม)
@@ -637,10 +642,10 @@ async def answer_question(
                 
                 if category:
                     cat_key = f"cat:{category}"
-                    if cat_key not in table_cat_map: table_cat_map[cat_key] = safe_html
+                    if cat_key not in table_cat_map: table_cat_map[cat_key] = table_map[table_ref_id]
                 if role:
                     role_key = f"role:{role}"
-                    if role_key not in table_cat_map: table_cat_map[role_key] = safe_html
+                    if role_key not in table_cat_map: table_cat_map[role_key] = table_map[table_ref_id]
             
             # เพิ่มเนื้อหาลงใน Context Parts
             context_parts.append(f"{chunk_header}\n{content[:3500]}")
@@ -655,16 +660,17 @@ async def answer_question(
     # ------------------------------------------------------------------
     # PROMPT ENGINEERING: GENIUS EDITION (Text + Table + Image)
     # ------------------------------------------------------------------
-    
+    # ------------------------------------------------------------------
+    # PROMPT ENGINEERING: GENIUS EDITION (Text + Table + Image)
+    # ------------------------------------------------------------------
     if mode == "table":
         # === MODE 1: TABLE EXTRACTION ===
-        # (คงเดิม: เน้นดึงตารางเป๊ะๆ)
         system_prompt = (
             "บทบาท: คุณคือระบบ AI อัจฉริยะที่เชี่ยวชาญการสกัดข้อมูลโครงสร้าง (Structured Data Extraction)\n"
             "ภารกิจ: ค้นหา 'ตาราง' ที่ตรงกับคำถามของผู้ใช้มากที่สุดจาก CONTEXT ที่ให้มา\n"
             "\n"
             "ขั้นตอนการทำงาน:\n"
-            "1. สแกนหาข้อมูลที่มีระบุว่าเป็น (SOURCE: Table) หรือ (Type: table)\n"
+            "1. สแกนหาข้อมูลที่มีระบุว่าเป็น (TYPE: TABLE)\n"
             "2. อ่านหัวข้อตาราง (Table Name/Summary) และเนื้อหาภายในเพื่อตรวจสอบความเกี่ยวข้อง\n"
             "3. การตอบกลับ (Strict Output):\n"
             "   - ถ้าเจอ: ให้ตอบเฉพาะรหัส [SHOW_TABLE:TBL_x] เท่านั้น (ห้ามพูด ห้ามเกริ่นนำ)\n"
@@ -674,27 +680,24 @@ async def answer_question(
             f"=== CONTEXT ===\n{context_text}\n==============="
         )
     else:
-        # === MODE 2: SMART ANALYST (Text + Table + Image Integration) ===
+        # === MODE 2: SMART ANALYST ===
         system_prompt = (
             "บทบาท: คุณคือ 'ผู้เชี่ยวชาญด้านเอกสาร' ที่เน้นความถูกต้องของข้อมูลสูงสุด\n"
             "หน้าที่: ตอบคำถามจาก Context ที่ให้มา โดยเลือกวิธีนำเสนอที่ดีที่สุด\n"
             "\n"
-            "🧠 วิธีการเลือกแสดงผล (Decision Logic):\n"
-            "1. **ถ้าเป็น 'ตารางข้อมูล' (Data Table):** เช่น รายรับรายจ่าย, สเปคสินค้า, ตัวเลขเปรียบเทียบ\n"
-            "   - ให้ใช้ Tag: [SHOW_TABLE:TBL_x] (ห้ามวาดตาราง Markdown |...| เองเด็ดขาด! เพราะจะแสดงผลเพี้ยน)\n"
-            "2. **ถ้าเป็น 'แบบฟอร์ม' หรือ 'ตารางซับซ้อน' (Complex Form):** เช่น ใบสมัคร, ใบเสร็จ, เอกสารที่มีช่องกาถูก/ผิด\n"
-            "   - **ห้ามใช้ตาราง** ให้ใช้รูปภาพแทนทันที! โดยหา Path รูปที่ตรงกับหน้านั้น\n"
-            "   - ใช้ Tag: [SHOW_IMAGE: <path_file>]\n"
-            "   - เหตุผล: การแสดงเป็นรูปภาพจะอ่านง่ายและถูกต้องเหมือนต้นฉบับที่สุด\n"
+            "🧠 วิธีการนำเสนอข้อมูล:\n"
+            "1. **สำหรับ 'ตารางข้อมูล' หรือ 'แบบฟอร์ม':**\n"
+            "   - ให้ใช้ Tag: [SHOW_TABLE:TBL_x] ตามรหัสที่ระบุใน SOURCE เสมอ\n"
+            "   - ห้ามวาดตาราง Markdown |...| เองเด็ดขาด!\n"
+            "2. **สำหรับ 'รูปภาพทั่วไป':**\n"
+            "   - ให้ใช้ Tag: [SHOW_IMAGE: filepath] โดยก็อปปี้ค่าจาก file_path มาใส่ให้ถูกต้อง\n" # <--- แก้บรรทัดนี้ เลิกใช้เครื่องหมาย < >
             "\n"
             "📋 รูปแบบการตอบ:\n"
             "1. ตอบคำถามให้ตรงประเด็น\n"
-            "2. แทรกหลักฐาน (Table/Image) ตาม Logic ข้างบน\n"
-            "3. อธิบายข้อมูลในหลักฐานนั้นสั้นๆ\n"
+            "2. แทรก Tag อ้างอิงประกอบเสมอเมื่ออ้างอิงตารางหรือรูปภาพ\n"
+            "3. อธิบายข้อมูลสั้นๆ ให้เข้าใจง่าย\n"
             "\n"
-            "⚠️ กฎเหล็ก:\n"
-            "1. **ห้ามพิมพ์ตารางด้วยตัวอักษร** (เช่น | ชื่อ | สกุล |) เพราะจะทำให้หน้าเว็บพัง ให้ใช้ Tag [SHOW_...] เท่านั้น\n"
-            "2. ถ้า Context มีทั้ง Table และ Image ของเรื่องเดียวกัน ให้เลือก **Image** เป็นหลักสำหรับแบบฟอร์ม\n"
+            "⚠️ กฎเหล็ก: ห้ามพิมพ์ตารางด้วยตัวอักษร ให้ใช้ [SHOW_TABLE:TBL_x] แทนเสมอ\n"
             "\n"
             f"=== DOCUMENT CONTEXT ===\n{context_text}\n========================"
         )
@@ -748,53 +751,70 @@ async def answer_question(
              }
 
     # --- 5) Regex Replacement ---
-    if (table_map or table_cat_map) and answer_text:
+    if answer_text: # ลบเงื่อนไข table_map ออก เพื่อให้ดักจับรูปภาพได้เสมอ
         try:
-            pattern_cat = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*CAT\s*=\s*([^\]]+)\]", re.IGNORECASE)
-            
-            def replace_cat(match):
-                cat_name = match.group(1).strip().lower()
-                cat_key = f"cat:{cat_name}"
-                if cat_key in table_cat_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_cat_map[cat_key]}</div>\n"
-                role_key = f"role:{cat_name}"
-                if role_key in table_cat_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_cat_map[role_key]}</div>\n"
-                return match.group(0)
-            
-            answer_text = pattern_cat.sub(replace_cat, answer_text)
-            
-            def replace_match(match):
-                found_id = match.group(1)
+            # =========================================================
+            # 1. [CRITICAL FIX] แปลง Tag รูปภาพให้เป็น HTML <img> ทันที
+            # =========================================================
+            def fix_image_path(match):
+                path = match.group(1).strip()
                 
-                # ... (ส่วน Clean ID เดิมของคุณ) ...
-                clean_id = found_id.replace("TBL_", "").strip()
-
-                # ดึง HTML ดิบออกมา
-                raw_html = ""
-                if clean_id in table_map:
-                    raw_html = table_map[clean_id]
-                elif "." in found_id and found_id.split(".")[0] in table_map:
-                    raw_html = table_map[found_id.split(".")[0]]
-                elif len(table_map) == 1:
-                    first_key = list(table_map.keys())[0]
-                    raw_html = table_map[first_key]
-                
-                # ถ้าเจอข้อมูลตาราง ให้ทำการ "ล้างไพ่" (Clean Attributes)
-                if raw_html:
-                    # 1. ลบ attributes เก่าที่ติดมากับ tag table ออกให้หมด (เช่น border="1", width="100%")
-                    # เปลี่ยน <table ...> เป็น <table> เพียวๆ
-                    clean_html = re.sub(r'<table[^>]*>', '<table>', raw_html, flags=re.IGNORECASE)
+                # [ป้องกัน AI ซื่อบื้อ] ถ้า AI พิมพ์ <path> หรือ <file_path> มา ให้ลบทิ้งไปเลย ไม่ต้องเรนเดอร์รูป
+                if "<" in path or ">" in path:
+                    return ""
                     
-                    # 2. (Optional) ลบ style ใน td/th ด้วยถ้าต้องการ (แต่ปกติแก้ที่ table tag ก็พอแล้ว)
-                    # clean_html = re.sub(r' style="[^"]*"', '', clean_html) 
+                clean_path = path.replace("\\", "/")
+                
+                # ประกอบ Path ให้สมบูรณ์
+                if clean_path.startswith("images/"):
+                    primary_doc_id = docs[0].metadata.get("doc_id", "unknown") if docs else "unknown"
+                    clean_path = f"/ingested/{primary_doc_id}/{clean_path}"
+                elif clean_path.startswith("ingested/"):
+                    clean_path = f"/{clean_path}"
+                    
+                # ส่งเป็น HTML Image Tag
+                return f"\n<img src='{clean_path}' alt='Image Data' class='max-w-full h-auto rounded shadow-sm border mx-auto my-4' />\n"
 
-                    # 3. ส่งกลับพร้อม Wrapper div ที่เราเขียน CSS ดักไว้แล้ว
-                    return f"\n<div class='answer-tables-content'>{clean_html}</div>\n"
+            img_pattern = re.compile(r"\[(?:SHOW_IMAGE|IMAGE)\s*:\s*([^\]]+)\]", re.IGNORECASE)
+            answer_text = img_pattern.sub(fix_image_path, answer_text)
+            # =========================================================
+            # 2. การแทนที่ [SHOW_TABLE] (โค้ดเดิม)
+            # =========================================================
+            if table_map or table_cat_map:
+                pattern_cat = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*CAT\s*=\s*([^\]]+)\]", re.IGNORECASE)
+                
+                def replace_cat(match):
+                    cat_name = match.group(1).strip().lower()
+                    cat_key = f"cat:{cat_name}"
+                    if cat_key in table_cat_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_cat_map[cat_key]}</div>\n"
+                    role_key = f"role:{cat_name}"
+                    if role_key in table_cat_map: return f"\n<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'>{table_cat_map[role_key]}</div>\n"
+                    return match.group(0)
+                
+                answer_text = pattern_cat.sub(replace_cat, answer_text)
+                
+                def replace_match(match):
+                    found_id = match.group(1)
+                    clean_id = found_id.replace("TBL_", "").strip()
+                    
+                    raw_html = ""
+                    if clean_id in table_map:
+                        raw_html = table_map[clean_id]
+                    elif "." in found_id and found_id.split(".")[0] in table_map:
+                        raw_html = table_map[found_id.split(".")[0]]
+                    elif len(table_map) == 1:
+                        first_key = list(table_map.keys())[0]
+                        raw_html = table_map[first_key]
+                    
+                    if raw_html:
+                        clean_html = re.sub(r'<table[^>]*>', '<table>', raw_html, flags=re.IGNORECASE)
+                        return f"\n<div class='answer-tables-content'>{clean_html}</div>\n"
 
-                return match.group(0)
+                    return match.group(0)
 
-            pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*(?:TBL[_]?)?\s*([\d\.]+)\]", re.IGNORECASE)
-            answer_text = pattern.sub(replace_match, answer_text)
-            
+                pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*(?:TBL[_]?)?\s*([\d\.]+)\]", re.IGNORECASE)
+                answer_text = pattern.sub(replace_match, answer_text)
+                
         except Exception as e:
             logger.error(f"[rag] Regex replacement failed: {e}")
 
