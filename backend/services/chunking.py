@@ -280,9 +280,31 @@ def _group_blocks_semantically(blocks: List[TextBlock]) -> List[Dict]:
                 "section": current_section,
                 "primary_intent": _select_primary_intent(list(current_intent_set))
             })
-            current_chunk_blocks = []
-            current_length = 0
+            
+            # --- [FIX: CHUNK OVERLAP LOGIC] ---
+            # ดึงข้อมูลจากส่วนท้ายของ Chunk ก่อนหน้ามาแปะใน Chunk ใหม่
+            overlap_buffer = []
+            overlap_len = 0
+            
+            # วิ่งย้อนหลังหา Block ที่ขนาดรวมกันไม่เกิน _CHUNK_OVERLAP
+            for b in reversed(current_chunk_blocks):
+                b_len = len(b.content)
+                # ถ้าความยาวเกินลิมิต Overlap ที่ตั้งไว้ ให้หยุดดึง
+                if overlap_len + b_len > _CHUNK_OVERLAP:
+                    break
+                overlap_buffer.insert(0, b) # ดันไปไว้ข้างหน้าเสมอเพื่อรักษาลำดับ
+                overlap_len += b_len
+            
+            # นำ Overlap Buffer มาเป็นจุดเริ่มต้นของ Chunk ถัดไป
+            current_chunk_blocks = list(overlap_buffer)
+            current_length = overlap_len
             current_intent_set = set()
+            
+            # อัปเดต Intent ของบล็อกที่นำมาทำ Overlap อีกครั้ง
+            for b in overlap_buffer:
+                if id(b) in intent_cache:
+                    current_intent_set.update(intent_cache[id(b)]["intent"])
+            # ----------------------------------
 
         current_chunk_blocks.append(block)
         current_length += block_len

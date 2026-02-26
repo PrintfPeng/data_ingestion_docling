@@ -7,12 +7,14 @@ from pathlib import Path
 import sys
 import re
 from typing import Optional, List
+import os
+
+# --- [NEW] Imports สำหรับ LangChain & Gemini (OCR Corrector) ---
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate
 
 # [CHANGE] ใช้ DoclingParser ตัวใหม่ที่เราทำ Hybrid Ingestion ไว้
 from ingestion.docling_parser import DoclingParser
-# from ingestion.pdf_parser import parse_pdf  <-- ไม่ใช้ตัวเก่าแล้ว
-# from ingestion.table_extractor import extract_tables <-- ไม่ใช้แล้วเพราะ Docling จัดการให้
-
 from ingestion.document_classifier import classify_document
 from ingestion.image_extractor import extract_images
 from ingestion.schema import IngestedDocument, TextBlock
@@ -21,16 +23,64 @@ from ingestion.ocr_extractor import ocr_extract_document
 # [IMPORTANT] ต้องเรียกตัวนี้มาใช้ ไม่งั้นไฟล์ .md ไม่เกิด
 from ingestion.markdown_generator import generate_markdown
 
-
 # Helper Class สำหรับส่ง Config ให้ DoclingParser (เพื่อให้เซฟรูปได้ถูกที่)
 class IngestionConfig:
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
 
 
+# =====================================================================
+# [NEW] AI OCR Corrector: ฟังก์ชันใช้ LLM แก้คำผิดจากการสแกน OCR
+# =====================================================================
+def _correct_ocr_text_with_llm(raw_text: str) -> str:
+    """
+    ใช้ LLM (Gemini) ในการแก้คำผิดจากการสแกน OCR 
+    โดยรักษาตัวเลขและโครงสร้างประโยคเดิมไว้
+    """
+    if not raw_text or len(raw_text.strip()) < 10:
+        return raw_text # ถ้ายาวไม่พอ ไม่ต้องส่งแก้ให้เปลืองโควต้า
+
+    try:
+        # ใช้ Flash เพื่อความรวดเร็วและประหยัดค่าใช้จ่าย
+        # หมายเหตุ: ต้องมีตัวแปร GOOGLE_API_KEY อยู่ใน Environment
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash", 
+            temperature=0.0, # บังคับให้ไม่คิดเองเออเอง (No Hallucination)
+            max_tokens=2048
+        )
+
+        # ออกแบบ Prompt แบบ Zero-shot Instruction
+        prompt = PromptTemplate.from_template(
+            """คุณคือผู้เชี่ยวชาญด้านการตรวจสอบและแก้ไขเอกสารภาษาไทย (Proofreader)
+ข้อความด้านล่างนี้เป็นข้อความที่ได้จากระบบ OCR ซึ่งมีคำผิด (Typo) สระลอย หรือพยัญชนะที่อ่านผิดเพี้ยนไป
+
+หน้าที่ของคุณ:
+1. แก้ไขคำที่สะกดผิดให้ถูกต้องตามบริบทภาษาไทย (เช่น "เฉินทถแทน" -> "เงินทดแทน", "จานวน" -> "จำนวน")
+2. ห้ามดัดแปลงแก้ไข "ตัวเลข" "ชื่อเฉพาะ" หรือ "วันที่" โดยเด็ดขาด
+3. ห้ามตัดทอนข้อความ หรือสรุปความ ให้คงโครงสร้างประโยคเดิมไว้ให้มากที่สุด
+4. ส่งคืนกลับมา *เฉพาะข้อความที่แก้ไขแล้วเท่านั้น* ห้ามมีคำอธิบาย หรือเครื่องหมาย Markdown ครอบข้อความ
+
+ข้อความต้นฉบับ:
+{raw_text}
+"""
+        )
+
+        chain = prompt | llm
+        corrected_text = chain.invoke({"raw_text": raw_text}).content
+
+        # ลบ Whitespace ส่วนเกินที่ LLM อาจจะเผลอใส่มา
+        return corrected_text.strip()
+
+    except Exception as e:
+        print(f"⚠️ [OCR-Corrector] LLM Correction failed, using raw text. Error: {e}")
+        return raw_text # Fallback: ถ้า AI พัง ให้คืนค่าข้อความดิบกลับไป ป้องกันระบบล่ม
+# =====================================================================
+
+
 def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path, use_ocr: bool = True) -> None:
     """
     เรียก OCR ด้วย Gemini แล้วเอาข้อความต่อเข้าไปใน doc.texts
+    พร้อมทั้งทำความสะอาดภาษาไทยและแก้คำผิดด้วย AI
     """
     if not use_ocr:
         return
@@ -48,7 +98,7 @@ def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path, use_ocr: bool = True
     # สมมติว่า ocr_result มี attribute .texts หรือเป็น dict ที่มี key "texts"
     texts = getattr(ocr_result, "texts", None)
     
-    # Fallback ถ้า ocr_result เป็น list ของ TextBlock โดยตรง (ขึ้นอยู่กับการ implement ของ ocr_extractor)
+    # Fallback ถ้า ocr_result เป็น list ของ TextBlock โดยตรง
     if not texts and isinstance(ocr_result, list):
         texts = ocr_result
 
@@ -72,6 +122,15 @@ def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path, use_ocr: bool = True
         if not content:
             continue
 
+        # --- [STEP 1: ลบช่องว่างส่วนเกินที่คั่นระหว่างตัวอักษรไทย] ---
+        content = content.replace("\x00", "")
+        content = re.sub(r'(?<=[\u0E00-\u0E7F])\s+(?=[\u0E00-\u0E7F])', '', content)
+
+        # --- [STEP 2: ใช้ AI แก้คำผิด (Typo Correction)] ---
+        print(f"   🤖 [AI] Correcting typos on page {page}...")
+        content = _correct_ocr_text_with_llm(content)
+        # -----------------------------------------------------------
+
         current_index += 1
         block_id = f"ocr_{current_index:04d}"
 
@@ -80,7 +139,7 @@ def _attach_ocr_text(doc: IngestedDocument, pdf_path: Path, use_ocr: bool = True
             doc_id=doc_id,
             page=page,
             content=content,
-            extra={"source": "gemini_ocr"}, # ระบุ source ให้ชัดเจน
+            extra={"source": "gemini_ocr_corrected"}, # อัปเดต Source ให้รู้ว่าผ่านการคลีนแล้ว
         )
         doc.texts.append(tb)
 
@@ -96,7 +155,7 @@ def run_ingestion_pipeline(
     Ingestion pipeline (Hybrid Version):
     1) เตรียม Folder และ Config
     2) อ่าน PDF ด้วย DoclingParser (Text + Complex Tables as Images)
-    3) เสริม OCR (Optional)
+    3) เสริม OCR (Optional) + AI Corrector
     4) Classify และดึงรูปประกอบทั่วไป
     5) Validate และ Save JSON + Markdown
     """
@@ -144,8 +203,7 @@ def run_ingestion_pipeline(
         tb.doc_id = doc_id
     # -----------------------
 
-    # 3) ต่อข้อความจาก OCR เสริม (ถ้าเปิด)
-    # ฟังก์ชันนี้จะเรียก ocr_extractor.py ถ้าคุณมี
+    # 3) ต่อข้อความจาก OCR เสริม (ถ้าเปิด) พร้อมผ่านระบบ AI แก้คำผิด
     _attach_ocr_text(doc, pdf_path, use_ocr=use_ocr)
 
     # 4) Classify doc_type
@@ -208,7 +266,6 @@ def run_ingestion_pipeline(
         json.dump([t.to_dict() for t in doc.texts], f, ensure_ascii=False, indent=2)
 
     with table_path.open("w", encoding="utf-8") as f:
-        # ตรงนี้สำคัญ: to_dict() จะรวม image_path ไปด้วย
         json.dump([tb.to_dict() for tb in doc.tables], f, ensure_ascii=False, indent=2)
 
     with image_path.open("w", encoding="utf-8") as f:

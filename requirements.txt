@@ -26,3 +26,4 @@ camelot-py
 opencv-python
 Pillow
 docling
+pythainlp

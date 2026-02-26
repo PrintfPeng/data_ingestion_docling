@@ -1,5 +1,9 @@
 from __future__ import annotations
-
+try:
+    from pythainlp import word_tokenize
+    _HAS_PYTHAINLP = True
+except ImportError:
+    _HAS_PYTHAINLP = False
 import os
 from typing import List, Dict, Any, Optional
 
@@ -47,25 +51,31 @@ def get_embedding_client() -> HuggingFaceEmbeddings:
     return _embeddings_client
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
-    """
-    helper สำหรับ embed เป็น batch จาก list ของข้อความ
-    NOTE: Functions using this must handle metadata association manually.
-    """
-    if not texts:
-        return []
+def _keyword_overlap_count(query: str, text: str) -> int:
+    """นับจำนวนคำที่ตรงกัน (รองรับภาษาไทยด้วย PyThaiNLP)"""
+    
+    # 1. ตัด Stopwords พื้นฐาน
+    stopwords = {"คือ", "เป็น", "อยู่", "จะ", "ได้", "ที่", "ซึ่ง", "อัน", "ของ", "what", "is", "are", "the", "a", "an", "ครับ", "ค่ะ"}
+    
+    # 2. ฟังก์ชันตัดคำ (Tokenizer)
+    def tokenize(s):
+        s = s.lower()
+        if _HAS_PYTHAINLP:
+            # engine='newmm' เป็น dictionary-based ที่เร็วและแม่นยำ
+            tokens = word_tokenize(s, engine='newmm', keep_whitespace=False)
+        else:
+            # Fallback ถ้าไม่มี lib
+            tokens = s.split() 
+        # กรองคำสั้นๆ และ stopwords ออก
+        return set(t for t in tokens if t not in stopwords and len(t) > 1)
 
-    client = get_embedding_client()
-    return client.embed_documents(texts)
-
-
-def embed_query(text: str) -> List[float]:
-    """
-    helper สำหรับ embed ข้อความเดี่ยว (เช่นใช้ตอน similarity search)
-    """
-    client = get_embedding_client()
-    return client.embed_query(text)
-
+    q_tokens = tokenize(query)
+    t_tokens = tokenize(text)
+    
+    if not q_tokens: return 0
+    
+    # คืนค่าจำนวนคำที่ Intersect กัน
+    return len(q_tokens.intersection(t_tokens))
 
 # =============================================================================
 # >>> EMBEDDINGS CONTRACT FIX <<<

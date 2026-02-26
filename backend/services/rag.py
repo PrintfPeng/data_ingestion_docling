@@ -1,3 +1,4 @@
+# backend/services/rag.py
 from __future__ import annotations
 
 import os
@@ -5,8 +6,7 @@ import re
 import json
 import logging
 import math
-import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from pathlib import Path
 from difflib import SequenceMatcher
 
@@ -15,14 +15,12 @@ from dotenv import load_dotenv
 # [CHANGE] เปลี่ยน Import เป็น ChatOpenAI สำหรับ Custom API
 try:
     from langchain_openai import ChatOpenAI
-    # [UPDATED] เพิ่ม AIMessage เพื่อรองรับ History
-    from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+    from langchain_core.messages import HumanMessage, SystemMessage
     _HAS_GENAI = True
 except Exception:
     ChatOpenAI = None  # type: ignore
     HumanMessage = None  # type: ignore
     SystemMessage = None  # type: ignore
-    AIMessage = None # type: ignore
     _HAS_GENAI = False
 
 # --- Re-ranking imports ---
@@ -34,7 +32,7 @@ except ImportError:
     _HAS_RERANKER = False
     _RERANK_MODEL = None
 
-from .vector_store import search_similar, sanitize_doc_id
+from .vector_store import search_similar
 
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -97,6 +95,27 @@ def normalize_score(raw_score: float) -> float:
     except OverflowError:
         return 0.0 if raw_score < 0 else 1.0
 
+
+# -------------------------------------------------------------------
+# [NEW FIX] Sanitize Document ID (ให้ตรงกับ Backend)
+# -------------------------------------------------------------------
+def sanitize_doc_id(doc_id: str) -> str:
+    """
+    Sanitize document ID to match backend storage format.
+    """
+    if not doc_id:
+        return ""
+    # Lowercase
+    doc_id = doc_id.lower().strip()
+    # Replace spaces with underscores
+    doc_id = re.sub(r'\s+', '_', doc_id)
+    
+    # [CHANGE] แก้บรรทัดนี้: เพิ่ม \u0E00-\u0E7F (ช่วงรหัสภาษาไทย) ลงไปในข้อยกเว้น
+    doc_id = re.sub(r'[^a-z0-9_\u0E00-\u0E7F-]', '', doc_id) 
+    
+    return doc_id
+
+
 # -------------------------------------------------------------------
 # Helper: Sanitization
 # -------------------------------------------------------------------
@@ -134,14 +153,11 @@ def _get_llm_instance(model: Optional[str] = None, temperature: float = _DEFAULT
             openai_api_base=api_base,
             max_retries=2,
             request_timeout=60 # เพิ่ม timeout เผื่อโมเดลใหญ่ตอบช้า
-            # max_tokens=150 # เพิ่มเพื่อรองรับคำตอบยาวขึ้น
         )
     except Exception as e:
         logger.exception("[rag] Failed to init LLM: %s", e)
         return None
 
-
-# backend/services/rag.py
 
 def _get_google_llm():
     """สร้าง Google Gemini Instance เป็นแผนสำรอง"""
@@ -180,8 +196,20 @@ def _get_reranker_model():
 
 
 # -------------------------------------------------------------------
-# Intent & Logic Guards
+# [NEW] Intent & Logic Guards (เพิ่มส่วนนี้)
 # -------------------------------------------------------------------
+
+def _rule_based_intent(query: str) -> Optional[str]:
+    if not query or not query.strip(): return None
+    q = query.lower()
+    table_keywords = ["ตาราง", "table", "คอลัมน์", "column", "แถว", "row", "สรุป", "summary", "ยอด", "amount", "list", "รายการ", "schedule"]
+    image_keywords = ["รูป", "รูปภาพ", "image", "logo", "กราฟ", "graph", "chart", "diagram", "photo", "ภาพ"]
+    is_table = any(w in q for w in table_keywords)
+    is_image = any(w in q for w in image_keywords)
+    if is_table and not is_image: return "table"
+    if is_image and not is_table: return "both"
+    if is_table and is_image: return "both"
+    return "text"
 
 def _detect_general_intent(query: str) -> bool:
     """ตรวจสอบว่าเป็นคำถามทั่วไปที่ไม่เกี่ยวกับเอกสารหรือไม่"""
@@ -202,6 +230,7 @@ def _keyword_overlap_count(query: str, text: str) -> int:
     q_tokens = set(q_clean.split())
     t_tokens = set(t_clean.split())
     
+    # ตัด Stopwords ทั่วไปออก
     stopwords = {"คือ", "เป็น", "อยู่", "จะ", "ได้", "ที่", "ซึ่ง", "อัน", "ของ", "what", "is", "are", "the", "a", "an", "ครับ", "ค่ะ"}
     q_tokens = q_tokens - stopwords
     
@@ -239,6 +268,7 @@ def _filter_relevant_docs(query: str, docs: list, min_score: float = MIN_SCORE_T
 def _build_context_text(docs) -> str:
     parts: List[str] = []
     total_tokens = 0
+    # [🔥 แก้ตรงนี้] ลดจาก 12000 เหลือ 4000
     MAX_TOKENS_ESTIMATE = 4000
 
     parts.append("⚠️ **แหล่งข้อมูลอ้างอิง:** (เรียงตามความเกี่ยวข้อง)\n")
@@ -283,72 +313,16 @@ def _generate_fallback_answer(docs, error_msg: str = "") -> str:
               
     return header + joined_snippets
 
-# -------------------------------------------------------------------
-# [NEW] 1. Metadata Pre-filtering (Inference)
-# -------------------------------------------------------------------
-def _infer_search_filters(query: str) -> Dict[str, Any]:
-    """
-    วิเคราะห์ Query เพื่อสร้าง Filter สำหรับ ChromaDB
-    โดย Map กับ metadata ที่ chunking.py/semantic_enricher.py สร้างไว้
-    """
-    filters = {}
-    q = query.lower()
-
-    # Intent Mapping (ดูจาก chunking.py)
-    if any(w in q for w in ["ราคา", "บาท", "งบ", "cost", "price", "budget", "เงิน", "จ่าย"]):
-        filters["primary_intent"] = "financial"
-    
-    # Section Mapping (ดูจาก semantic_enricher.py)
-    if "สัญญา" in q or "contract" in q or "agreement" in q:
-        filters["section"] = "legal_section"
-    elif "ประชุม" in q or "meeting" in q or "minute" in q:
-        filters["section"] = "work_section"
-    
-    return filters
 
 # -------------------------------------------------------------------
-# [NEW] 2. Fact-Checking (Self-Correction)
+# [NEW] Filter Table Documents by Category/Role
 # -------------------------------------------------------------------
-async def _verify_answer_factuality(llm, question: str, answer: str, context: str) -> str:
-    """
-    ให้ AI ตรวจสอบตัวเองว่าคำตอบที่ได้ มีหลักฐานใน Context จริงไหม
-    """
-    # ถ้าคำตอบสั้นมาก หรือบอกว่าไม่รู้ ไม่ต้องเช็ค
-    if len(answer) < 50 or "ไม่พบข้อมูล" in answer:
-        return answer
-
-    verification_prompt = (
-        "คุณคือผู้ตรวจสอบความถูกต้อง (Fact Checker) ที่เข้มงวด\n"
-        "ภารกิจ: ตรวจสอบว่า 'คำตอบ' ด้านล่างนี้ มีหลักฐานสนับสนุนจาก 'CONTEXT' ที่ให้มาหรือไม่\n"
-        "\n"
-        f"--- CONTEXT ---\n{context[:4000]}...\n\n"
-        f"--- คำถาม ---\n{question}\n\n"
-        f"--- คำตอบที่ต้องตรวจสอบ ---\n{answer}\n\n"
-        "กฎการตัดสิน:\n"
-        "1. ถ้าคำตอบ **ถูกต้องและมีใน Context**: ให้ตอบกลับด้วยคำตอบเดิมเป๊ะๆ (ห้ามแก้)\n"
-        "2. ถ้าคำตอบ **มีการมั่ว (Hallucination)** หรือข้อมูลไม่มีใน Context: ให้แก้คำตอบโดยใช้เฉพาะข้อมูลใน Context เท่านั้น\n"
-        "3. ถ้าข้อมูลใน Context ไม่พอตอบ: ให้ตอบว่า 'ขออภัย ข้อมูลในเอกสารไม่เพียงพอต่อการตอบคำถามนี้'\n"
-        "\n"
-        "ผลลัพธ์ (คำตอบที่ผ่านการตรวจสอบแล้ว):"
-    )
-
-    try:
-        res = await llm.ainvoke([HumanMessage(content=verification_prompt)])
-        verified_answer = getattr(res, "content", str(res)).strip()
-        
-        # ป้องกันกรณี AI ตอบกลับมาสั้นเกินไปหรือ Error
-        if len(verified_answer) < 5: 
-            return answer
-            
-        logger.info("[RAG] ✅ Fact-Check completed.")
-        return verified_answer
-    except Exception as e:
-        logger.warning(f"[RAG] Fact-Check failed: {e}")
-        return answer # Fallback to original answer
+def _filter_table_docs_by_category(docs, query: str):
+    return docs
 
 
 # -------------------------------------------------------------------
-# [UPDATED] Advanced Re-ranking Logic (Smarter)
+# [UPDATED] Advanced Re-ranking Logic (Smarter with Image Penalty)
 # -------------------------------------------------------------------
 def _clean_text_for_rerank(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
@@ -358,20 +332,36 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
     if not docs:
         return []
 
+    # [STEP 2] สร้างตัวดักจับคำถามสถิติ
+    query_lower = query.lower()
+    is_stat_query = any(w in query_lower for w in [
+        "กี่คน", "กี่บาท", "กี่แห่ง", "กี่ราย", "จำนวน", "เท่าไหร่", 
+        "เท่าไร", "รวม", "มูลค่า", "สถิติ", "ร้อยละ", "เปอร์เซ็นต์"
+    ])
+
     # 1. Keyword Boosting
-    query_terms = set(query.lower().split())
+    query_terms = query_lower.split()
     scored_docs = []
     for d in docs:
         content = (getattr(d, "page_content", "") or "").lower()
+        source = str(d.metadata.get("source", "text")).lower()
         base_score = 0.0
         
         for term in query_terms:
             if term in content:
                 base_score += 1.0
         
-        if query.lower() in content:
-            base_score += 5.0 # Boost หนักๆถ้าเจอ Exact phrase
+        if query_lower in content:
+            base_score += 3.0
             
+        # [NEW: BOOSTING STRATEGY] 
+        # ถ้าถามสถิติ ให้เพิ่มคะแนนตาราง และลดคะแนนรูปภาพ
+        if is_stat_query:
+            if source == "table":
+                base_score += 3.0  # ตารางมักจะมีตัวเลขสถิติ
+            elif source == "image":
+                base_score -= 5.0  # กดคะแนนรูปภาพลงให้จม เพื่อไม่ให้ Caption แย่งซีน
+                
         # Init metadata if missing
         if "ai_score" not in d.metadata:
             d.metadata["ai_score"] = 0.0
@@ -397,14 +387,19 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
                 
                 for idx, raw in zip(valid_pairs_indices, raw_scores):
                     norm_score = normalize_score(float(raw))
+                    doc = scored_docs[idx]
+                    source = str(doc.metadata.get("source", "text")).lower()
                     
-                    # Hybrid Score: AI (Major) + Keyword (Minor Boost)
-                    final_score = norm_score
-                    if scored_docs[idx].metadata["keyword_score"] > 2:
-                         final_score += 0.1
-                         
-                    scored_docs[idx].metadata["ai_score"] = min(1.0, final_score)
-                    scored_docs[idx].metadata["raw_score"] = float(raw)
+                    # [NEW: Post-Rerank Boosting]
+                    if is_stat_query:
+                        if source == "table":
+                            norm_score += 0.15 # ดันตารางขึ้นมาอีก
+                        elif source == "image":
+                            norm_score -= 0.30 # หักคะแนนภาพทิ้ง
+                            
+                    # ป้องกันคะแนนติดลบ
+                    doc.metadata["ai_score"] = max(0.0, norm_score)
+                    doc.metadata["raw_score"] = float(raw)
                 
                 # Sort by AI Score
                 scored_docs.sort(key=lambda x: x.metadata["ai_score"], reverse=True)
@@ -415,6 +410,10 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
 
     # 3. Sort & Cut (Fallback to keyword score)
     scored_docs.sort(key=lambda x: x.metadata.get("keyword_score", 0), reverse=True)
+    for d in scored_docs:
+        if d.metadata["ai_score"] == 0.0:
+            d.metadata["ai_score"] = 0.3 # Dummy score
+    
     return scored_docs[:top_k]
 
 
@@ -477,12 +476,26 @@ def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
     best_score = 0.0
     best_item = None
     
-    # Simple check
-    for p in all_pairs:
-        score = _simple_similarity(query, p["question"])
-        if score > best_score:
-            best_score = score
-            best_item = p
+    reranker = _get_reranker_model()
+    if reranker:
+        try:
+            input_pairs = [[query, p["question"]] for p in all_pairs]
+            raw_scores = reranker.predict(input_pairs)
+            
+            for i, raw in enumerate(raw_scores):
+                norm_score = normalize_score(float(raw))
+                if norm_score > best_score:
+                    best_score = norm_score
+                    best_item = all_pairs[i]
+        except Exception:
+            pass
+
+    if not best_item:
+        for p in all_pairs:
+            score = _simple_similarity(query, p["question"])
+            if score > best_score:
+                best_score = score
+                best_item = p
         
     if best_item and best_score >= 0.75: # High confidence only
         return {
@@ -494,56 +507,15 @@ def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
 
 
 # -------------------------------------------------------------------
-# [NEW FUNCTION] Query Rewriting Logic
-# -------------------------------------------------------------------
-async def _rewrite_query_with_history(llm, query: str, history: List[Dict[str, str]]) -> str:
-    """แปลงคำถาม Follow-up ให้เป็นคำถามเต็ม โดยดูจากประวัติ"""
-    if not history:
-        return query
-
-    # แปลง history dict เป็น String
-    history_context = ""
-    # เอาแค่ 3 ข้อความล่าสุดก็พอ เพื่อไม่ให้ Prompt ยาวเกินไป
-    for msg in history[-3:]: 
-        role = "User" if msg.get("role") == "user" else "Assistant"
-        content = msg.get("content", "").replace("\n", " ")
-        history_context += f"{role}: {content}\n"
-
-    prompt = (
-        "ภารกิจ: แปลงคำถามของผู้ใช้ (Current Input) ให้เป็นประโยคคำถามที่สมบูรณ์และเข้าใจได้ด้วยตัวเอง "
-        "โดยอ้างอิงบริบทจากการสนทนาก่อนหน้า (History) เพื่อนำไปใช้ค้นหาข้อมูลในระบบ\n"
-        "ข้อควรระวัง: ห้ามตอบคำถาม! ให้ทำหน้าที่แค่เรียบเรียงประโยคใหม่เท่านั้น\n"
-        "ถ้าคำถามสมบูรณ์อยู่แล้ว ให้ส่งคืนคำถามเดิมได้เลย\n\n"
-        f"--- History ---\n{history_context}\n"
-        f"--- Current Input ---\nUser: {query}\n"
-        "--- Standalone Question (Thai) ---"
-    )
-    
-    try:
-        # ใช้ LLM ตัวเดียวกับที่ใช้ตอบคำถาม
-        res = await llm.ainvoke([HumanMessage(content=prompt)])
-        new_query = getattr(res, "content", str(res)).strip()
-        logger.info(f"[RAG] 🔄 Rewritten Query: '{query}' -> '{new_query}'")
-        return new_query
-    except Exception as e:
-        logger.error(f"[RAG] Rewrite failed: {e}")
-        return query
-
-
-# -------------------------------------------------------------------
-# 5) main RAG function (UPGRADED & ROBUST & STATEFUL)
+# 5) main RAG function (UPGRADED & ROBUST)
 # -------------------------------------------------------------------
 async def answer_question(
     query: str,
     doc_ids: Optional[List[str]] = None,
     top_k: int = 10,
     mode: str = "auto",
-    history: List[Dict[str, str]] = [] # [NEW] รับ History เข้ามา
 ) -> Dict:
     
-    # Init LLM เร็วขึ้นเพื่อใช้ Rewrite Query
-    llm = _get_llm_instance(model=_LL_MODEL_FAST)
-
     # 1. Input Check
     if not query or not query.strip():
         return {"answer": "กรุณาพิมพ์คำถามครับ", "sources": [], "intent": None, "mode": mode}
@@ -557,22 +529,9 @@ async def answer_question(
             "mode": mode
         }
 
-    # ---------------------------------------------------------
-    # [NEW] STEP 1.5: Query Rewriting (หัวใจของ Stateful Search)
-    # ---------------------------------------------------------
-    search_query = query # ค่าตั้งต้น
-    if history and llm:
-        # ถ้ามีประวัติ ให้ AI ช่วยเกลาคำถามก่อนเอาไปค้น DB
-        search_query = await _rewrite_query_with_history(llm, query, history)
-
-    # [NEW] STEP 1.8: Infer Filters (Pre-filtering)
-    filters = _infer_search_filters(search_query)
-    if filters:
-        logger.info(f"[RAG] 🔍 Applied Filters: {filters}")
-
     # [NEW] STEP 2: Mode Selection (Deterministic)
     if mode == "auto":
-        q_lower = search_query.lower() # ใช้ search_query ที่เกลาแล้วในการตัดสินใจ
+        q_lower = query.lower()
         if any(x in q_lower for x in ["ตาราง", "table", "ยอด", "สถิติ", "list", "รายการ", "สรุป"]):
             intent = "table"
         else:
@@ -585,50 +544,36 @@ async def answer_question(
     if doc_ids:
         sanitized_doc_ids = [sanitize_doc_id(doc_id) for doc_id in doc_ids if doc_id]
 
+    doc_types = None
+    sources_filter = None 
+
     # 3. Search (3-Layer Fallback Strategy)
     docs = []
     raw_docs = []
 
     try:
-        # Layer 1: Strict Search
-        # [IMPORTANT] ใช้ search_query (คำถามที่เกลาแล้ว) ในการค้นหา
-        raw_docs = search_similar(
-            search_query, 
-            k=top_k*3, 
-            doc_ids=sanitized_doc_ids, 
-            where_filter=filters # ส่ง Filter ไป
-        )
+        # Layer 1: Strict Search [STEP 1: เพิ่ม Recall เป็น top_k*5]
+        raw_docs = search_similar(query, k=top_k*5, doc_ids=sanitized_doc_ids, sources=sources_filter, doc_types=doc_types)
         
         logger.info(f"[rag] Found {len(raw_docs)} raw docs")
 
-        # Q&A Check
-        qna_match = _find_best_qna_answer_from_docs(search_query, raw_docs)
-        if qna_match:
-             return {
-                 "answer": qna_match["answer"],
-                 "sources": qna_match["sources"],
-                 "intent": "qna",
-                 "mode": f"{mode}+qna"
-             }
-
-        # Rerank (ใช้ search_query)
-        docs = _rerank_documents(search_query, raw_docs, top_k)
+        # Rerank
+        docs = _rerank_documents(query, raw_docs, top_k)
         
         # [NEW] STEP 4: STRICT FILTERING (No Rescue Mission)
-        # กรองอีกชั้นด้วย Python เพื่อความชัวร์
-        filtered_docs = []
-        for d in docs:
-            score = d.metadata.get("ai_score", 0)
-            threshold = MIN_SCORE_THRESHOLD
-            
-            # ถ้า intent ตรงกันเป๊ะ ยอมลด threshold ได้นิดหน่อย
-            if filters and d.metadata.get("primary_intent") == filters.get("primary_intent"):
-                threshold = 0.20 
-            
-            if score >= threshold:
-                filtered_docs.append(d)
+        relevant_docs = _filter_relevant_docs(query, docs, min_score=MIN_SCORE_THRESHOLD)
         
-        if not filtered_docs:
+        if not relevant_docs:
+            # Check Q&A direct match before giving up
+            qna_match = _find_best_qna_answer_from_docs(query, docs) # Use original docs to find doc_id context
+            if qna_match:
+                return {
+                    "answer": qna_match["answer"],
+                    "sources": qna_match["sources"],
+                    "intent": "qna",
+                    "mode": f"{mode}+qna"
+                }
+            
             return {
                 "answer": "ไม่พบข้อมูลที่ตรงกับคำถามในเอกสารที่แนบมาครับ (Relevance Score ต่ำเกินไป)",
                 "sources": [],
@@ -636,7 +581,7 @@ async def answer_question(
                 "mode": mode
             }
             
-        docs = filtered_docs # Use filtered docs
+        docs = relevant_docs # Use filtered docs
 
     except Exception as e:
         logger.error(f"[rag] Search failed: {e}")
@@ -648,6 +593,7 @@ async def answer_question(
     context_parts = [] # เก็บเนื้อหาทีละส่วนเพื่อรวมเป็น Context ใหญ่
     table_counter = 0 
     
+    # [NEW] เก็บรายการ ID ของตารางที่เจอใน Search Result เอาไว้ใช้กรณี AI ไม่ยอมตอบ (Fail-safe)
     found_table_ids = []
     
     try:
@@ -668,24 +614,26 @@ async def answer_question(
             if source == "table":
                 table_counter += 1
                 table_ref_id = str(table_counter) # เลขรัน 1, 2, 3...
+                
+                # เก็บ ID จริงไว้ใช้กับ Fail-safe
                 found_table_ids.append(table_ref_id)
                 
-                # 1. ดึง HTML มาเก็บใน Map
+                # 1. ดึง HTML มาเก็บใน Map (สำหรับแสดงผลหน้าเว็บ)
                 raw_html = md.get("html_content", "")
                 safe_html = _sanitize_html_content(raw_html)
                 if not safe_html:
+                    # Fallback ถ้าไม่มี HTML ให้แสดง Markdownในกล่องแทน
                     safe_html = f"<pre class='text-xs overflow-auto p-2 bg-gray-100'>{md.get('markdown_content', 'No content')}</pre>"
                 
-                # เก็บโดยใช้ TBL_i
-                tbl_key = f"TBL_{table_ref_id}"
-                table_map[tbl_key] = safe_html
+                table_map[table_ref_id] = safe_html
                 
-                # 2. แปะป้ายบอก AI ชัดๆ
-                chunk_header += f" | **TYPE: TABLE (Code: [SHOW_TABLE:{tbl_key}])**"
+                # 2. [CRITICAL FIX] แปะป้ายบอก AI ชัดๆ ว่าตารางนี้คือรหัสอะไร
+                chunk_header += f" | **TYPE: TABLE (Code: [SHOW_TABLE:TBL_{table_ref_id}])**"
                 
                 # Mapping category/role
                 category = md.get("category", "").strip().lower()
                 role = md.get("role", "").strip().lower()
+                
                 if category:
                     cat_key = f"cat:{category}"
                     if cat_key not in table_cat_map: table_cat_map[cat_key] = safe_html
@@ -704,7 +652,7 @@ async def answer_question(
         return {"answer": "เกิดข้อผิดพลาดในการเตรียมข้อมูล", "sources": [], "intent": intent, "mode": mode}
     
     # ------------------------------------------------------------------
-    # PROMPT ENGINEERING
+    # PROMPT ENGINEERING: GENIUS EDITION (Text + Table + Image)
     # ------------------------------------------------------------------
     
     if mode == "table":
@@ -724,76 +672,62 @@ async def answer_question(
             f"=== CONTEXT ===\n{context_text}\n==============="
         )
     else:
-        # === MODE 2: SMART ANALYST ===
+        # === MODE 2: SMART ANALYST (Text + Table + Image Integration) ===
         system_prompt = (
             "บทบาท: คุณคือ 'ผู้เชี่ยวชาญด้านเอกสาร' ที่เน้นความถูกต้องของข้อมูลสูงสุด\n"
             "หน้าที่: ตอบคำถามจาก Context ที่ให้มา โดยเลือกวิธีนำเสนอที่ดีที่สุด\n"
             "\n"
             "🧠 วิธีการเลือกแสดงผล (Decision Logic):\n"
-            "1. **ถ้าเป็น 'ตารางข้อมูล' (Data Table):** เช่น รายรับรายจ่าย, สเปคสินค้า\n"
-            "   - ให้ใช้ Tag: [SHOW_TABLE:TBL_x] (ห้ามวาดตาราง Markdown |...| เองเด็ดขาด!)\n"
-            "2. **ถ้าเป็น 'แบบฟอร์ม' หรือ 'ตารางซับซ้อน':**\n"
-            "   - ห้ามใช้ตาราง ให้ใช้รูปภาพแทน (ถ้ามี) หรือสรุปความเอา\n"
+            "1. **ถ้าเป็น 'ตารางข้อมูล' (Data Table):** เช่น รายรับรายจ่าย, สเปคสินค้า, ตัวเลขเปรียบเทียบ\n"
+            "   - ให้ใช้ Tag: [SHOW_TABLE:TBL_x] (ห้ามวาดตาราง Markdown |...| เองเด็ดขาด! เพราะจะแสดงผลเพี้ยน)\n"
+            "2. **ถ้าเป็น 'แบบฟอร์ม' หรือ 'ตารางซับซ้อน' (Complex Form):** เช่น ใบสมัคร, ใบเสร็จ, เอกสารที่มีช่องกาถูก/ผิด\n"
+            "   - **ห้ามใช้ตาราง** ให้ใช้รูปภาพแทนทันที! โดยหา Path รูปที่ตรงกับหน้านั้น\n"
+            "   - ใช้ Tag: [SHOW_IMAGE: <path_file>]\n"
+            "   - เหตุผล: การแสดงเป็นรูปภาพจะอ่านง่ายและถูกต้องเหมือนต้นฉบับที่สุด\n"
             "\n"
             "📋 รูปแบบการตอบ:\n"
-            "1. ตอบคำถามให้ตรงประเด็น โดยพิจารณาจากทั้ง **History** และ **Context**\n"
-            "2. แทรกหลักฐาน (Table) ตาม Logic ข้างบน\n"
+            "1. ตอบคำถามให้ตรงประเด็น\n"
+            "2. แทรกหลักฐาน (Table/Image) ตาม Logic ข้างบน\n"
             "3. อธิบายข้อมูลในหลักฐานนั้นสั้นๆ\n"
             "\n"
             "⚠️ กฎเหล็ก:\n"
             "1. **ห้ามพิมพ์ตารางด้วยตัวอักษร** (เช่น | ชื่อ | สกุล |) เพราะจะทำให้หน้าเว็บพัง ให้ใช้ Tag [SHOW_...] เท่านั้น\n"
-            "2. ห้ามมั่วข้อมูลที่ไม่มีใน Context\n"
+            "2. ถ้า Context มีทั้ง Table และ Image ของเรื่องเดียวกัน ให้เลือก **Image** เป็นหลักสำหรับแบบฟอร์ม\n"
             "\n"
             f"=== DOCUMENT CONTEXT ===\n{context_text}\n========================"
         )
 # -------------------------------------------------------------------
     # 4) Call LLM (Chain of Fallback: OpenRouter -> Google -> Raw)
     # -------------------------------------------------------------------
+    llm = _get_llm_instance(model=_LL_MODEL_FAST)
     
     answer_text = ""
     ai_response = None
     
-    # [NEW] สร้าง Messages List สำหรับส่งให้ LLM โดยรวม History ด้วย
-    messages = [SystemMessage(content=system_prompt)]
-    
-    for h in history[-6:]: 
-        if h.get("role") == "user":
-            messages.append(HumanMessage(content=h.get("content", "")))
-        else:
-            messages.append(AIMessage(content=h.get("content", "")))
-    
-    final_input = (
-        f"คำถามปัจจุบัน: {query}\n\n"
-        f"(หมายเหตุระบบ: Context สำหรับตอบคำถามนี้ถูกค้นหามาด้วย keyword: '{search_query}')"
-    )
-    messages.append(HumanMessage(content=final_input))
-    
-    # --- 1. แผน A: ลองใช้ Primary LLM ---
+    # --- 1. แผน A: ลองใช้ Primary LLM (OpenRouter/Qwen) ---
     try:
         if llm:
-            ai_response = await llm.ainvoke(messages)
+            ai_response = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
             answer_text = getattr(ai_response, "content", str(ai_response))
-            
-            # [NEW] 7. Fact Check (Self-Correction)
-            if len(answer_text) > 100:
-                answer_text = await _verify_answer_factuality(llm, query, answer_text, context_text)
-
     except Exception as e:
         logger.warning(f"[rag] ❌ Primary LLM failed: {e}")
 
-    # --- 2. แผน B: ถ้าแผน A พัง ให้ลองใช้ Google Gemini ---
+    # --- 2. แผน B: ถ้าแผน A พัง ให้ลองใช้ Google Gemini (Backup) ---
     if not answer_text or answer_text == "AI Error":
         try:
             google_llm = _get_google_llm()
             if google_llm:
                 logger.info("[rag] 🔄 Switching to Backup LLM: Google Gemini...")
-                ai_response = await google_llm.ainvoke(messages)
+                ai_response = await google_llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
                 answer_text = getattr(ai_response, "content", str(ai_response))
+            else:
+                logger.warning("[rag] Google API Key not found, skipping backup.")
         except Exception as e_google:
              logger.error(f"[rag] ❌ Google LLM also failed: {e_google}")
 
-    # --- 3. แผน C: ถ้าทุกอย่างพัง ---
+    # --- 3. แผน C (สุดท้าย): ถ้า Google ก็พังอีก (หรือโหมด Table บังคับ) ---
     if not answer_text:
+        # [Fail-safe] ถ้าเป็นโหมด Table แล้วเราเจอ ID ตารางในขั้นตอน Search 
         if mode == "table" and found_table_ids:
              answer_text = "" 
         else:
@@ -808,7 +742,6 @@ async def answer_question(
     # --- 5) Regex Replacement ---
     if (table_map or table_cat_map) and answer_text:
         try:
-            # Replace Categories
             pattern_cat = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*CAT\s*=\s*([^\]]+)\]", re.IGNORECASE)
             
             def replace_cat(match):
@@ -821,27 +754,26 @@ async def answer_question(
             
             answer_text = pattern_cat.sub(replace_cat, answer_text)
             
-            # Replace TBL_x
             def replace_match(match):
-                found_id = match.group(1).strip() # TBL_1 or 1
-                clean_id = found_id.replace("TBL_", "") # 1
+                found_id = match.group(1)
+                clean_id = found_id.replace("TBL_", "").strip()
 
                 raw_html = ""
-                # Try finding TBL_1
-                if found_id in table_map: raw_html = table_map[found_id]
-                # Try finding 1 (by assuming TBL_ prefix)
-                elif f"TBL_{clean_id}" in table_map: raw_html = table_map[f"TBL_{clean_id}"]
-                # Try finding exact key if numeric
-                elif clean_id in table_map: raw_html = table_map[clean_id]
+                if clean_id in table_map:
+                    raw_html = table_map[clean_id]
+                elif "." in found_id and found_id.split(".")[0] in table_map:
+                    raw_html = table_map[found_id.split(".")[0]]
+                elif len(table_map) == 1:
+                    first_key = list(table_map.keys())[0]
+                    raw_html = table_map[first_key]
                 
-                # ถ้าเจอข้อมูลตาราง ให้ทำการ "ล้างไพ่" (Clean Attributes)
                 if raw_html:
                     clean_html = re.sub(r'<table[^>]*>', '<table>', raw_html, flags=re.IGNORECASE)
                     return f"\n<div class='answer-tables-content'>{clean_html}</div>\n"
 
                 return match.group(0)
 
-            pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*(?:TBL[_]?)?\s*([\w\d\.]+)\]", re.IGNORECASE)
+            pattern = re.compile(r"\[(?:SHOW_TABLE|SHOW|TABLE)[^:]*:\s*(?:TBL[_]?)?\s*([\d\.]+)\]", re.IGNORECASE)
             answer_text = pattern.sub(replace_match, answer_text)
             
         except Exception as e:
