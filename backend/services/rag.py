@@ -660,9 +660,6 @@ async def answer_question(
     # ------------------------------------------------------------------
     # PROMPT ENGINEERING: GENIUS EDITION (Text + Table + Image)
     # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # PROMPT ENGINEERING: GENIUS EDITION (Text + Table + Image)
-    # ------------------------------------------------------------------
     if mode == "table":
         # === MODE 1: TABLE EXTRACTION ===
         system_prompt = (
