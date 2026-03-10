@@ -68,7 +68,7 @@ def _get_google_client():
     try:
         genai.configure(api_key=api_key)
         # ใช้โมเดล Flash เพราะฟรีและเร็ว
-        return genai.GenerativeModel('gemini-2.0-flash')
+        return genai.GenerativeModel('gemini-2.5-flash')
     except: return None
 
 def _encode_image(image_path: Path) -> str:

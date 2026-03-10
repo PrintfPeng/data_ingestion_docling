@@ -1,394 +1,472 @@
 
-    <!DOCTYPE html>
-    <html lang="th">
+    <html>
     <head>
-        <meta charset="UTF-8">
-        <title>รายงานผลการทดสอบ RAG (Hybrid Judge)</title>
+        <meta charset="utf-8">
+        <title>RAG Evaluation Report</title>
         <style>
-            body { font-family: 'Sarabun', sans-serif; margin: 20px; background: #f4f6f9; }
-            .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 12px; border: 1px solid #ddd; text-align: left; vertical-align: top; }
-            th { background: #2c3e50; color: white; }
-            .score { font-weight: bold; padding: 4px 8px; border-radius: 4px; color: white; display: inline-block; }
-            .s-5, .s-4 { background: #2ecc71; } .s-3 { background: #f1c40f; color: black; } .s-2, .s-1, .s-0 { background: #e74c3c; }
-            .Easy { border-left: 5px solid #2ecc71; }
-            .Medium { border-left: 5px solid #f1c40f; }
-            .Hard { border-left: 5px solid #e74c3c; }
+            body { font-family: 'Sarabun', sans-serif; background-color: #f1f5f9; padding: 20px; color: #0f172a; }
+            .container { max-width: 1400px; margin: 0 auto; }
+            .card { background: white; padding: 24px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow-x: auto; }
+            h2 { margin-top: 0; color: #1e293b; }
+            
+            /* บังคับตารางไม่ให้ทะลุขอบจอ */
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+            th, td { padding: 16px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; }
+            th { background-color: #1e293b; color: white; text-align: center; text-transform: uppercase; font-size: 14px; letter-spacing: 0.5px; }
+            
+            /* ป้ายบอกระดับความยาก (Badges) */
+            .badge-easy { background-color: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }
+            .badge-medium { background-color: #fef08a; color: #854d0e; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }
+            .badge-hard { background-color: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }
+            
+            /* สีคะแนน */
+            .score { font-weight: bold; padding: 6px 12px; border-radius: 6px; display: inline-block; text-align: center; width: 24px; font-size: 16px; }
+            .s-5 { background: #22c55e; color: white; }
+            .s-4 { background: #84cc16; color: white; }
+            .s-3 { background: #eab308; color: white; }
+            .s-2 { background: #f97316; color: white; }
+            .s-1 { background: #ef4444; color: white; }
+            
+            /* ตกแต่ง Tag และรูปภาพ */
+            .tag { font-family: monospace; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #334155; word-break: break-all; }
+            img { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 8px; }
+            .reason { color: #475569; font-size: 13px; line-height: 1.5; }
         </style>
-        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
     </head>
     <body>
-        <div class="card" style="text-align: center;">
-            <h2>คะแนนรวม: <span style="color:blue">76.67%</span> (ดี 🔵)</h2>
-            <p>Judge Model: Hybrid (Qwen Primary / Gemini Backup)</p>
-        </div>
-        <div class="card">
-            <table>
-                <thead>
-                    <tr>
-                        <th width="10%">ระดับ</th>
-                        <th width="30%">คำถาม</th>
-                        <th width="30%">คำตอบ AI</th>
-                        <th width="5%">คะแนน</th>
-                        <th width="25%">เหตุผล</th>
-                    </tr>
-                </thead>
-                <tbody>
+        <div class="container">
+            <div class="card" style="text-align: center;">
+                <h2>📊 ผลประเมินระบบ Hybrid RAG</h2>
+                <h1 style="font-size: 48px; margin: 10px 0; color: #eab308">75.33% <span style="font-size: 24px;">(Good)</span></h1>
+                <p style="color: #64748b;"><strong>เอกสารทดสอบ:</strong> 015_co-op_03_ใบสมัครงานสหกิจศึกษา_update | <strong>จำนวนคำถาม:</strong> 30 ข้อ</p>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="5%">ข้อ</th>
+                            <th width="10%">ระดับ</th>
+                            <th width="25%">คำถาม</th>
+                            <th width="35%">คำตอบจากระบบ</th>
+                            <th width="5%">คะแนน</th>
+                            <th width="20%">เหตุผลจาก AI</th>
+                        </tr>
+                    </thead>
+                    <tbody>
     
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>สารทำความเย็นที่ใช้ในตู้เย็นรุ่นนี้คือชนิดใด</td>
-                    <td>สารทำความเย็นที่ใช้ในตู้เย็นรุ่นนี้คือ **HFC-134a** ตามข้อมูลในตารางข้อมูลจำเพาะของตู้เย็นรุ่นต่างๆ ที่แสดงในหน้า 6 ของคู่มือการใช้งาน (SOURCE 4) 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">1</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">นักศึกษาที่สมัครงานในเอกสารนี้ชื่ออะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ชื่อนักศึกษาที่สมัครงานในเอกสารนี้คือ นายซอลาฮูดิน ดอเล๊าะ [SOURCE 3]</span></td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบถูกต้องตามที่คาดหวัง และรวมไปถึงการระบุแหล่งอ้างอิง [SOURCE 3] ทำให้มีความสมบูรณ์</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">2</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">รหัสนักศึกษาของผู้สมัครคืออะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ไม่พบข้อมูลเกี่ยวกับรหัสนักศึกษาของผู้สมัครในเอกสารที่ให้มา</td>
+                            <td style="text-align: center;"><span class="score s-1">1</span></td>
+                            <td class="reason">ระบบตอบว่าไม่พบข้อมูล แต่ความจริงมีคำตอบที่ชัดเจนคือ 406559015</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">3</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">นักศึกษาเรียนอยู่ชั้นปีที่เท่าไหร่ และได้เกรดเฉลี่ยรวมเท่าใด?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">นักศึกษาเรียนอยู่ชั้นปีที่ 4 และได้เกรดเฉลี่ยรวม 3.22</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบตรงกับที่คาดหวังทุกประการ ให้คะแนนสูงสุด</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">4</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">นักศึกษาต้องการสมัครงานกับสถานประกอบการชื่ออะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากข้อมูลที่มีอยู่ ไม่พบชื่อสถานประกอบการที่นักศึกษาต้องการสมัครงาน แต่มีข้อมูลระบุว่านักศึกษาเคยทำงานที่ **ตลาดเก็นติ้ง ตำบล สุไหงโก-ลก อำเภอ สุไหงโก-ลก นราธิวาส 96120** 
+<img src='ไม่พบรูปภาพตามที่ขอ' alt='Image Data' class='max-w-full h-auto rounded shadow-sm border mx-auto my-4' />
+ 
+
+หากต้องการข้อมูลเพิ่มเติม กรุณาตรวจสอบเอกสารอื่น ๆ หรือสอบถามนักศึกษาโดยตรงอีกครั้งค่ะ</td>
+                            <td style="text-align: center;"><span class="score s-1">1</span></td>
+                            <td class="reason">คำตอบไม่ตรงกับคำตอบที่คาดหวัง และมีข้อมูลที่ไม่เกี่ยวข้องกับคำถาม (หัวข้อตลาดเก็นติ้ง) แม้ว่ามีการพยายามให้รายละเอียดเพิ่มเติม แต่ก็ยังผิดไปจากคำถามหลัก</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">5</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">สมัครงานในตำแหน่งอะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากเอกสารที่มีอยู่ ไม่ได้ระบุตำแหน่งงานที่สมัครชัดเจน แต่มีข้อมูลเกี่ยวกับอาชีพเป้าหมายที่ผู้สมัครสนใจ ได้แก่:
+
+1. Programmer
+2. Cyber Security
+3. Software Engineer
+
+ผู้สมัครมีความสนใจในด้านการเขียนโปรแกรม การรักษาความปลอดภัยทางไซเบอร์ และการพัฒนาซอฟต์แวร์ [SOURCE 9]</span></td>
+                            <td style="text-align: center;"><span class="score s-3">3</span></td>
+                            <td class="reason">คำตอบตรงกับข้อมูลที่มี แต่ไม่ได้ระบุตำแหน่งที่สมัครชัดเจนตามที่ต้องการ ซึ่งคือ 'front end developer'</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">6</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">สถานประกอบการตั้งอยู่ที่จังหวัดอะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">สถานประกอบการตั้งอยู่ที่จังหวัดนราธิวาส ตามที่อยู่ที่ระบุในเอกสาร:
+
+ที่อยู่: บ้านเลขที่ 139 หมู่ 5 ตำบล ศาลาใหม่ อำเภอ ตากใบ จังหวัด นราธิวาส 96110 [SOURCE 8]</span></td>
+                            <td style="text-align: center;"><span class="score s-1">1</span></td>
+                            <td class="reason">คำตอบผิดไปคนละเรื่องจากที่คาดหวัง กรุงเทพมหานคร ไปเป็น นราธิวาส</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">7</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">สาขาวิชาและคณะที่นักศึกษาเรียนอยู่คืออะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากข้อมูลที่มีอยู่ในเอกสาร ไม่พบข้อมูลที่ระบุสาขาวิชาและคณะที่นักศึกษาเรียนอยู่โดยชัดเจน แต่จากประวัติการศึกษาที่ระบุว่านักศึกษาจบการศึกษาระดับมัธยมปลาย / ปวช. จากโรงเรียนอิสลามบูรพาวิทยา อาจสันนิษฐานได้ว่านักศึกษาอาจอยู่ในระดับการศึกษาที่สูงขึ้น แต่ไม่มีข้อมูลเฉพาะเจาะจงเกี่ยวกับสาขาวิชาและคณะ
+
+หากต้องการข้อมูลที่แน่ชัด ควรตรวจสอบเอกสารเพิ่มเติมหรือสอบถามจากนักศึกษาโดยตรง</td>
+                            <td style="text-align: center;"><span class="score s-3">3</span></td>
+                            <td class="reason">คำตอบไม่สามารถให้ข้อมูลเฉพาะเจาะจงเกี่ยวกับสาขาวิชาและคณะที่นักศึกษาเรียนอยู่ แต่มีการพยายามให้ข้อมูลเพิ่มเติมและแนะนำวิธีการหาข้อมูลที่แน่ชัด</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">8</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">บัตรประจำตัวประชาชนของผู้สมัครหมดอายุวันที่เท่าไหร่?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ไม่พบข้อมูลเกี่ยวกับวันที่บัตรประจำตัวประชาชนของผู้สมัครหมดอายุในเอกสารที่ให้มา</td>
+                            <td style="text-align: center;"><span class="score s-1">1</span></td>
+                            <td class="reason">ตอบว่าหาไม่เจอ แสดงว่าระบบไม่สามารถค้นหาข้อมูลที่เฉพาะเจาะจงในเอกสารได้อย่างแม่นยำ</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">9</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">นักศึกษานับถือศาสนาอะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ในเอกสารไม่มีการระบุถึงศาสนาของนักศึกษาโดยตรง ดังนั้นไม่สามารถตอบได้ว่านักศึกษานับถือศาสนาอะไรจากข้อมูลที่มีอยู่</td>
+                            <td style="text-align: center;"><span class="score s-3">3</span></td>
+                            <td class="reason">AI ตอบว่าไม่สามารถระบุศาสนาของนักศึกษาได้ตามข้อมูลที่มี ซึ่งข้อมูลนั้นอาจไม่ครบถ้วน แต่ก็ไม่ได้ทำการเก็งตั้งข้อมูลที่ไม่แน่ชัด (Hallucination)</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">10</td>
+                            <td style="text-align: center;"><span class="badge-easy">EASY</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ระยะเวลาปฏิบัติงานสหกิจศึกษาเริ่มและสิ้นสุดเมื่อไหร่?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ในเอกสารใบสมัครงานสหกิจศึกษาไม่มีการระบุระยะเวลาปฏิบัติงานสหกิจศึกษาที่ชัดเจนว่าเริ่มและสิ้นสุดเมื่อไหร่ ข้อมูลที่มีอยู่เป็นเพียงประวัติการศึกษาและประวัติการอบรมเท่านั้น
+
+หากต้องการทราบระยะเวลาปฏิบัติงานสหกิจศึกษา ควรตรวจสอบเอกสารอื่นๆ ที่เกี่ยวข้องหรือติดต่อผู้สมัครโดยตรงเพื่อยืนยันข้อมูล
+
+หากต้องการดูข้อมูลประวัติการศึกษาและประวัติการอบรม สามารถดูได้จากตารางดังนี้: <span class='tag'>[SHOW_TABLE:TBL_9]</span></td>
+                            <td style="text-align: center;"><span class="score s-3">3</span></td>
+                            <td class="reason">ระบบตอบไม่ครบถ้วนและไม่ชัดเจนในการให้ข้อมูลระยะเวลาปฏิบัติงานสหกิจศึกษา แต่มีการเสนอตารางประกอบคำตอบ</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">11</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">อาชีพเป้าหมายที่นักศึกษาสนใจมีอะไรบ้าง?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">อาชีพเป้าหมายที่นักศึกษาสนใจมีดังนี้:
+
+1. Programmer
+2. Cyber Security
+3. Software Engineer</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ตอบถูกต้องครบถ้วนตามที่คาดหวัง</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">12</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ทักษะด้านเทคโนโลยีที่ผู้สมัครควรมีสำหรับตำแหน่งนี้คืออะไรบ้าง?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากข้อมูลในเอกสารใบสมัครงานสหกิจศึกษา ทักษะด้านเทคโนโลยีที่ผู้สมัครควรมีสำหรับตำแหน่งนี้ ได้แก่:
+
+1. **Infographic** - ความสามารถในการสร้างและออกแบบ Infographic
+2. **ถ่ายทำและตัดต่อรูปถ่ายและวิดีโอ** - ทักษะในการถ่ายทำและตัดต่อรูปถ่ายและวิดีโอ
+3. **โปรแกรมเมอร์** - ความสนใจและความสามารถในการเขียนโปรแกรม
+4. **Cyber Security** - ความสนใจและความสามารถในการด้านความปลอดภัยไซเบอร์
+5. **Software Engineer** - ความสนใจและความสามารถในการพัฒนาซอฟต์แวร์
+
+นอกจากนี้ ผู้สมัครยังมีประสบการณ์การอบรมด้านเทคโนโลยี ได้แก่:
+- **AI for Office Automation** - อบรมที่มหาวิทยาลัยราชภัฏยะลา
+- **Super AI Engineer 5th year** - อบรมที่มหาวิทยาลัยสงขลานครินทร์ วิทยาเขตภูเก็ต
+- **Yala Hackathon** - อบรมที่เทศบาลนครยะลา
+
+ทักษะเหล่านี้จะช่วยให้ผู้สมัครสามารถทำงานได้อย่างมืออาชีพและมีประสิทธิภาพในตำแหน่งที่ต้องการ.</td>
+                            <td style="text-align: center;"><span class="score s-1">1</span></td>
+                            <td class="reason">คำตอบที่ AI ให้มาไม่ตรงกับคำถามและไม่ตรงกับคำตอบที่คาดหวัง ทักษะที่唢-feira 提供与预期答案中的技能完全不符，涉及到完全不同的技能领域和技术。</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">13</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ลักษณะงานนี้ต้องทำงานร่วมกับทีมใดบ้าง?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากข้อมูลในเอกสารไม่มีการระบุรายละเอียดเกี่ยวกับลักษณะงานและการทำงานร่วมกับทีมอย่างชัดเจน แต่จากข้อมูลที่มีอยู่ ผู้สมัครมีลักษณะบุคลิกภาพที่สามารถทำงานร่วมกับผู้อื่นได้อย่างมืออาชีพ:
+
+- **บุคลิกภาพ:** สุขุม เยือกเย็น อดทน และมุ่งมั่นในหน้าที่
+- **การทำงาน:** ปฏิบัติงานด้วยความขยันและความรับผิดชอบ แม้ไม่พูดมากแต่เน้นผลลัพธ์
+- **การปรับตัว:** รักการเรียนรู้สิ่งใหม่ๆ และปรับตัวเข้ากับสภาพแวดล้อมได้อย่างเหมาะสม
+- **การทำงานร่วมกับผู้อื่น:** สามารถทำงานร่วมกับผู้อื่นได้อย่างมืออาชีพ
+
+หากต้องการข้อมูลเพิ่มเติมเกี่ยวกับลักษณะงานและการทำงานร่วมกับทีม อาจต้องสอบถามจากแหล่งข้อมูลอื่นที่มีรายละเอียดเฉพาะเจาะจงเกี่ยวกับตำแหน่งงานนั้นๆ</td>
+                            <td style="text-align: center;"><span class="score s-1">1</span></td>
+                            <td class="reason">คำตอบไม่ได้ให้ข้อมูลตามที่คาดหวัง eerie ทั้งยังมีการ Hallucination หรือการขึ้นเรื่องราวที่ไม่เกี่ยวข้องกับคำถามที่ถาม</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">14</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ผู้สมัครจบระดับมัธยมปลายจากสถานศึกษาใด และได้ผลการศึกษาเท่าไหร่?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ผู้สมัครจบระดับมัธยมปลายจากโรงเรียนอิสลามบูรพาวิทยา และได้ผลการศึกษา GPA 2.80 [SOURCE 9]</span></td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ตอบถูกต้องครบถ้วน ตรงตามคำตอบที่คาดหวัง</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">15</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ผู้สมัครเคยเข้าร่วมการอบรมโครงการ Yala Hackathon เมื่อวันที่เท่าไหร่?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">ผู้สมัครเคยเข้าร่วมการอบรมโครงการ Yala Hackathon ในวันที่ 13/08/68 ถึง 15/08/68 <span class='tag'>[SHOW_TABLE:TBL_015_co-op_03_ใบสมัครงานสหกิจศึกษา_update]</span></td>
+                            <td style="text-align: center;"><span class="score s-3">3</span></td>
+                            <td class="reason">คำตอบถูกต้องในส่วนของวันที่, แต่การเพิ่ม Tag [SHOW_TABLE] ไม่จำเป็น เพราะคำถามไม่ได้ขอดูตาราง</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">16</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">โครงการ Super AI Engineer 5th year จัดขึ้นที่จังหวัดใด?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">โครงการ Super AI Engineer 5th year จัดขึ้นที่มอ.ภูเก็ต 
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_001.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
 </td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบถูกต้องตรงตามข้อเท็จจริง (Ground Truth) แต่ไม่มีข้อมูลในบริบทที่สนับสนุนคำตอบ</td>
-                </tr>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบถูกต้องและสมบูรณ์ fulfillment ของเดิม มีการแขวงข้องรูปภาพ/ตาราง เพื่อแสดงข้อมูลเพิ่มเติมตามความต้องการของผู้ใช้.</td>
+                        </tr>
         
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>ปริมาณสารทำความเย็นที่ระบุไว้ในข้อมูลจำเพาะคือเท่าใด</td>
-                    <td>ตามข้อมูลในตารางข้อมูลจำเพาะของตู้เย็น (ตาราง 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
-) สารทำความเย็นที่ใช้ในตู้เย็นรุ่นต่างๆ คือ **HFC-134a** แต่ไม่มีการระบุปริมาณสารทำความเย็นที่แน่นอนในตารางนี้
-
-หากต้องการทราบปริมาณสารทำความเย็นที่แน่นอน ควรตรวจสอบคู่มือการใช้งานหรือข้อมูลทางเทคนิคเพิ่มเติมของตู้เย็นรุ่นที่คุณใช้อยู่</td>
-                    <td><span class="score s-1">1</span></td>
-                    <td style="color:gray;">คำตอบไม่ตรงกับข้อเท็จจริงที่กำหนดไว้ (Ground Truth) และไม่มีข้อมูลในบริบทที่สนับสนุนคำตอบที่ถูกต้อง</td>
-                </tr>
-        
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>แรงดันไฟฟ้าและความถี่ที่ระบุคือเท่าไหร่</td>
-                    <td>แรงดันไฟฟ้าและความถี่ที่ระบุสำหรับตู้เย็นรุ่นต่างๆ ของ Sharp คือ:
-
-- **แรงดันไฟฟ้า (โวตต์):** 220 โวตต์
-- **ความถี่ (เฮิรตซ์):** 50 เฮิรตซ์
-
-ข้อมูลนี้สามารถพบได้ในตารางข้อมูลจำเพาะของตู้เย็นรุ่นต่างๆ ตามที่ระบุในเอกสารประกอบการใช้งาน (SOURCE 5: 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
-)</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบถูกต้องตามข้อมูลที่ให้มา แต่เพิ่มเติมข้อมูลเฉพาะตู้เย็นของ Sharp ซึ่งไม่ได้ระบุในคำถาม</td>
-                </tr>
-        
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>ฉนวนกันความร้อนที่ใช้เป็นชนิดใด</td>
-                    <td>ฉนวนกันความร้อนที่ใช้ในตู้เย็นของ Sharp คือ CYCLO PENTANE (NON CFC 100%) ตามข้อมูลในตารางข้อมูลจำเพาะของตู้เย็นรุ่นต่างๆ 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">17</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">การอบรมเรื่อง AI for Office Automation จัดโดยหน่วยงานใด?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">การอบรมเรื่อง AI for Office Automation จัดโดยหน่วยงาน **มหาวิทยาลัยราชภัฏยะลา** 
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_001.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
 </td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบถูกต้องตรงตามข้อเท็จจริง แต่ไม่มีข้อมูลในบริบทที่สนับสนุนคำตอบ</td>
-                </tr>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบถูกต้องตามที่คาดหวัง และมีการเรียกใช้รูปภาพที่เกี่ยวข้อง</td>
+                        </tr>
         
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>อุปกรณ์หมายเลข 6 ในแผนภาพส่วนประกอบคือปุ่มอะไร</td>
-                    <td>อุปกรณ์หมายเลข 6 ในแผนภาพส่วนประกอบของตู้เย็น SHARP คือ **ปุ่มกดทำน้ำแข็งด่วน (Express ice making)** ซึ่งใช้สำหรับการทำน้ำแข็งอย่างรวดเร็ว
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">18</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">สรุปรายละเอียดลักษณะงาน (Job Description) ที่นักศึกษาต้องทำมาให้หน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากเอกสารใบสมัครงานสหกิจศึกษา (CO-OP๐๓) ไม่มีรายละเอียดลักษณะงาน (Job Description) ที่ระบุไว้เฉพาะ แต่มีการระบุอาชีพเป้าหมายที่นักศึกษาสนใจ ดังนี้:
 
-นี่คือรูปภาพที่แสดงส่วนประกอบของตู้เย็น SHARP แบบประตูเลื่อนสองบาน (Top Mount) ที่มีการระบุหมายเลขของส่วนต่างๆ ภายในตู้เย็น [SHOW_IMAGE: ingested/operation_manual_sharp/images/img_p002_004.png] รูปภาพนี้จะช่วยให้คุณเห็นตำแหน่งของปุ่มกดทำน้ำแข็งด่วนได้อย่างชัดเจน</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับข้อเท็จจริงและมีการอธิบายเพิ่มเติมที่สอดคล้องกับบริบทที่ให้มา</td>
-                </tr>
+1. Programmer
+2. Cyber Security
+3. Software Engineer
+
+นักศึกษาสนใจในลักษณะงานที่เกี่ยวข้องกับการเขียนโปรแกรม การรักษาความปลอดภัยทางไซเบอร์ และการพัฒนาซอฟต์แวร์
+
+หากต้องการรายละเอียดเพิ่มเติมเกี่ยวกับลักษณะงานเฉพาะ อาจต้องสอบถามเพิ่มเติมจากนักศึกษาหรือหน่วยงานที่เกี่ยวข้อง</td>
+                            <td style="text-align: center;"><span class="score s-2">2</span></td>
+                            <td class="reason">คำตอบไม่ตรงตามที่คาดหวัง เนื่องจากไม่มีการระบุรายละเอียดงานเฉพาะที่นักศึกษาต้องทำ เช่น การออกแบบพัฒนาเว็บ ทำงานกับทีม UX/UI และ Back-End</td>
+                        </tr>
         
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>อุปกรณ์หมายเลข 7 ในแผนภาพคืออะไร</td>
-                    <td>อุปกรณ์หมายเลข 7 ในแผนภาพคือ **LED light** หรือ **ไฟ LED** ซึ่งใช้สำหรับให้แสงสว่างภายในตู้เย็น 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">19</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">สรุปประวัติการอบรมทั้งหมดของนักศึกษาคนนี้ว่าเคยผ่านหัวข้ออะไรมาบ้าง</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">นักศึกษาคนนี้เคยผ่านการอบรมในหัวข้อต่างๆ ดังนี้:
+
+1. **AI for Office Automation**
+   - ระยะเวลา: 24/05/68 - 25/05/68
+   - หน่วยงานที่จัดอบรม: มหาวิทยาลัยราชภัฏยะลา
+
+2. **Super AI Engineer 5th year**
+   - ระยะเวลา: 11/07/68 - 13/07/68
+   - หน่วยงานที่จัดอบรม: มอ.ภูเก็ต
+
+3. **Yala Hackathon**
+   - ระยะเวลา: 13/08/68 - 15/08/68
+   - หน่วยงานที่จัดอบรม: เทศบาลนครยะลา
+
+หากต้องการข้อมูลเพิ่มเติมหรือรายละเอียดเฉพาะหัวข้อการอบรม สามารถแจ้งได้ครับ</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ตอบถูกต้อง ครบถ้วน ตรงตามคำถามที่คาดหวัง และให้รายละเอียดเพิ่มเติมเกี่ยวกับระยะเวลาและหน่วยงานที่จัดอบรม</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">20</td>
+                            <td style="text-align: center;"><span class="badge-medium">MEDIUM</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">เอกสารฉบับนี้คือเอกสารอะไร และมีจุดประสงค์เพื่ออะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">เอกสารฉบับนี้คือ **ใบสมัครงานสหกิจศึกษา** (Co-op Application Form) ซึ่งมีจุดประสงค์เพื่อให้นักศึกษาที่สนใจเข้าร่วมโครงการสหกิจศึกษาสามารถสมัครและให้ข้อมูลส่วนตัว ประวัติการศึกษา ความสามารถทางภาษา และข้อมูลอื่นๆ ที่เกี่ยวข้อง เพื่อใช้ในการพิจารณาการเข้าร่วมโครงการสหกิจศึกษา
+
+เอกสารนี้ประกอบด้วยข้อมูลต่างๆ ดังนี้:
+- ข้อมูลส่วนตัวของนักศึกษา
+- ประวัติการศึกษา
+- ประวัติการอบรม
+- ความสามารถทางภาษา
+- ความสามารถพิเศษ
+- ข้อมูลการติดต่อ
+- รายละเอียดลักษณะงานที่นักศึกษาสนใจ
+
+จุดประสงค์หลักของเอกสารนี้คือ:
+1. **การสมัคร**: เพื่อให้นักศึกษาสามารถสมัครเข้าร่วมโครงการสหกิจศึกษา
+2. **การพิจารณา**: เพื่อให้ผู้รับสมัครสามารถพิจารณาคุณสมบัติของนักศึกษา
+3. **การจัดการ**: เพื่อให้ผู้รับสมัครสามารถจัดการข้อมูลและติดต่อสื่อสารกับนักศึกษาได้อย่างมีประสิทธิภาพ</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบของ AI ถูกต้อง ครบถ้วน และตรงตามที่คาดหวัง รวมถึงให้รายละเอียดเพิ่มเติมที่เป็นประโยชน์</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">21</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ขอดูตารางประวัติการศึกษาของผู้สมัครหน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_000.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
 </td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบตรงกับความจริงที่กำหนด แต่ไม่มีบริบทหรือข้อมูลที่สนับสนุนคำตอบ</td>
-                </tr>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ระบบตอบกลับด้วยรูปภาพของตารางที่แสดงประวัติการศึกษา ตรงตามที่ผู้ใช้ขอดูตารางประวัติการศึกษา</td>
+                        </tr>
         
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>อุปกรณ์หมายเลข 15 ที่ประตูตู้เย็นคืออะไร</td>
-                    <td>อุปกรณ์หมายเลข 15 ที่ประตูตู้เย็นคือ **ช่องใส่ไข่ (Egg pocket)** ครับ
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">22</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ขอดูตารางประวัติการอบรมของผู้สมัครหน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_001.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
+ 
+
+ตารางนี้แสดงประวัติการอบรมของผู้สมัคร ซึ่งประกอบด้วยวันที่เริ่มต้นและสิ้นสุด การอบรม หัวข้ออบรม และหน่วยงานที่จัดอบรม.</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ระบบทำงานสมบูรณ์แบบด้วยการตอบกลับด้วย Tag ตาราง [SHOW_TABLE] ที่แสดงประวัติการอบรมของผู้สมัครตามที่คาดหวัง</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">23</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ขอดูตารางความสามารถทางภาษาของผู้สมัคร</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_002.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
+ 
+
+ตารางนี้แสดงความสามารถทางภาษาของผู้สมัครในด้านการฟัง พูด อ่าน และเขียน สำหรับภาษาอังกฤษ มลายู และไทย</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">AI ตอบกลับด้วยการเรียกใช้ Tag แสดงตาราง [SHOW_TABLE] ที่ตรงกับความต้องการของผู้ใช้ ตารางแสดงความสามารถทางภาษาของผู้สมัครตามที่คาดหวัง</td>
+                        </tr>
+        
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">24</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ในเอกสารมีตารางที่แสดงผลการเรียนตอนมัธยมไหม ขอดูหน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">มีตารางที่แสดงผลการเรียนตอนมัธยมปลายในเอกสารครับ สามารถดูได้จากตารางดังนี้:
 
 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_000.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
 </td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับตรงกับความจริงที่กำหนดไว้ แต่ใช้คำว่า 'ช่องใส่ไข่' แทน 'ชั้นวางไข่' ซึ่งมีความหมายคล้ายคลึงกัน</td>
-                </tr>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">AI ตอบกลับโดยใช้ Tag [SHOW_TABLE] ซึ่งตรงตามคำถามที่ผู้ใช้ว่าต้องการดูตารางผลการเรียนตอนมัธยม</td>
+                        </tr>
         
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>รุ่น SJ-C19E มีความกว้างเท่าใด</td>
-                    <td>รุ่น SJ-C19E มีความกว้าง 535 มม.</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับข้อเท็จจริงและมีความสอดคล้องกับบริบทที่ให้มา</td>
-                </tr>
-        
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>ตู้เย็นรุ่น SJ-CP190E-CH มีปริมาตรความจุจริงกี่คิว (cu.ft)</td>
-                    <td>ตู้เย็นรุ่น SJ-CP190E-CH มีปริมาตรความจุจริง 5.9 คิว (cu.ft)</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับข้อเท็จจริงและมีความสอดคล้องกับบริบทที่ให้มา</td>
-                </tr>
-        
-                <tr class="Easy">
-                    <td><strong>Easy</strong></td>
-                    <td>บริษัทผู้ผลิตขอขอบคุณที่เลือกใช้ผลิตภัณฑ์ยี่ห้อใด</td>
-                    <td>ไม่พบข้อมูลในเอกสารที่แนบมา</td>
-                    <td><span class="score s-1">1</span></td>
-                    <td style="color:gray;">คำตอบไม่ตรงกับข้อเท็จจริงและไม่มีข้อมูลในบริบทที่สนับสนุน</td>
-                </tr>
-        
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>หากต้องการเริ่มโหมดทำน้ำแข็งด่วน (Express Ice Making) ต้องทำอย่างไร</td>
-                    <td>เพื่อเริ่มโหมดทำน้ำแข็งด่วน (Express Ice Making) ให้ทำตามขั้นตอนต่อไปนี้:
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">25</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ช่วยแสดงตารางที่บอกว่าเคยไปอบรมที่ไหนบ้างให้ดูหน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_001.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
+ 
 
-1. **กดปุ่ม Express Ice Making:** กดปุ่ม **Express Ice Making** ค้างไว้เป็นเวลา **3 วินาที** ปุ่มนี้จะเป็นปุ่มสีแดงหรือสีส้ม/น้ำตาล ขึ้นอยู่กับรุ่นของตู้เย็น (ดูรูปภาพเพิ่มเติม: [SHOW_IMAGE: ingested/operation_manual_sharp/images/img_p009_027.png] และ [SHOW_IMAGE: ingested/operation_manual_sharp/images/img_p004_015.png])
-2. **ตรวจสอบสถานะ:** หลอดไฟในช่องแช่เย็นจะเริ่มกระพริบเพื่อแสดงว่าโหมดทำน้ำแข็งด่วนกำลังทำงาน
-
-โหมดทำน้ำแข็งด่วนจะสิ้นสุดการทำงานโดยอัตโนมัติในเวลาประมาณ **2 ชั่วโมง** แต่หากต้องการยกเลิกการทำงานก่อนเวลาดังกล่าว ให้กดปุ่ม **Express Ice Making** ค้างไว้อีก **3 วินาที** หลอดไฟในช่องแช่เย็นจะหยุดกระพริบ
-
-หากมีข้อสงสัยเพิ่มเติมหรือต้องการความช่วยเหลือ โปรดอ้างอิงคู่มือการใช้งานของตู้เย็นของคุณ</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับมีรายละเอียดเพิ่มเติมและเป็นขั้นตอนที่ชัดเจน แม้ว่าจะไม่ตรงกับ Ground Truth ทุกประการ แต่ก็ยังถูกต้องและให้ข้อมูลเพียงพอสำหรับผู้ใช้</td>
-                </tr>
+ตารางนี้แสดงรายการการอบรมที่ผู้สมัครเคยเข้าร่วม พร้อมกับวันที่เริ่มต้นและสิ้นสุด รวมถึงหัวข้ออบรมและหน่วยงานที่จัดอบรม</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ระบบตอบกลับโดยเรียกใช้ Tag [SHOW_TABLE] ถูกต้องและแสดงตารางการอบรมที่ผู้สมัครเคยเข้าร่วม ครบถ้วนตามที่คาดหวัง</td>
+                        </tr>
         
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>โหมดทำน้ำแข็งด่วนจะหยุดทำงานอัตโนมัติภายในกี่ชั่วโมง</td>
-                    <td>โหมดทำน้ำแข็งด่วนจะหยุดทำงานอัตโนมัติภายในเวลาประมาณ 2 ชั่วโมง โดยไม่คำนึงถึงสภาพของน้ำแข็ง [SOURCE 3] และ [SOURCE 5]</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับข้อเท็จจริงที่กำหนดและมีการอ้างอิงแหล่งที่มา</td>
-                </tr>
-        
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>ข้อห้ามในการใช้น้ำยาทำความสะอาดตู้เย็นมีอะไรบ้าง</td>
-                    <td>ข้อห้ามในการใช้น้ำยาทำความสะอาดตู้เย็นมีดังนี้:
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">26</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">มีตารางประเมินทักษะการฟังพูดอ่านเขียนภาษาต่างๆ ไหม ขอดูตารางนั้น</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">มีตารางประเมินทักษะการฟัง พูด อ่าน เขียน ภาษาต่างๆ ตามที่ท่านขอ ดังนี้:
 
-1. **ไม่ควรใช้น้ำยาทำความสะอาดหรือสารละลายที่ไม่ได้เจือจาง** ในการทำความสะอาดตู้เย็น เช่น แล็กเกอร์, สี, ผงขัดเงา, เบนซิน, น้ำร้อน, ฯลฯ เนื่องจากอาจทำให้ตู้เย็นเกิดความเสียหาย (SOURCE 1, SOURCE 5)
 
-2. **ไม่ควรราดน้ำลงบนตู้เย็นทั้งภายนอกและภายใน** เพราะอาจเกิดสนิมหรือไฟฟ้ารั่วได้ (SOURCE 5)
-
-3. **หลังจากทำความสะอาดด้วยน้ำสบู่** ควรเช็ดด้วยน้ำสะอาดอีกครั้ง เนื่องจากน้ำสบู่ที่เช็ดออกไม่หมดอาจทำให้เกิดรอยร้าวแก่ส่วนประกอบที่เป็นพลาสติก (SOURCE 4)
-
-หากปฏิบัติตามข้อห้ามเหล่านี้ จะช่วยยืดอายุการใช้งานของตู้เย็นและป้องกันความเสียหายที่อาจเกิดขึ้นได้</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบมีข้อมูลที่สอดคล้องกับข้อเท็จจริงหลัก แต่ไม่ได้ระบุข้อห้ามทั้งหมดตามที่ระบุใน Ground Truth อย่างชัดเจน เช่น ไม่ได้ระบุว่าห้ามใช้แอลกอฮอล์หรือน้ำมันปิโตรเลียม</td>
-                </tr>
-        
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>หากขอบยางประตูสกปรก ควรทำความสะอาดอย่างไร</td>
-                    <td>หากขอบยางประตูตู้เย็นสกปรก ควรทำความสะอาดดังนี้:
-
-1. ใช้แปรงสีฟันชุบน้ำอุ่นผสมน้ำยาทำความสะอาด
-2. ขัดทำความสะอาดขอบยางประตูอย่างระมัดระวัง
-3. ล้างด้วยน้ำสะอาดเพื่อกำจัดสิ่งสกปรกและน้ำยาทำความสะอาด
-4. ใช้ผ้าแห้งเช็ดให้สะอาด
-
-ควรทำความสะอาดขอบยางประตูเป็นประจำเพื่อรักษาความสะอาดและป้องกันการเสื่อมสภาพของยาง</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับมีรายละเอียดเพิ่มเติมและครอบคลุมมากกว่าคำตอบที่ถูกต้อง แต่ยังคงสอดคล้องกับข้อมูลที่ถูกต้องและไม่มีข้อผิดพลาด</td>
-                </tr>
-        
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>ควรหลีกเลี่ยงการวางตู้เย็นในตำแหน่งใดบ้างเพื่อประหยัดพลังงาน</td>
-                    <td>ควรหลีกเลี่ยงการวางตู้เย็นในบริเวณที่เป็นมุมแคบ หรือพื้นที่ที่มีความร้อนสูง เช่น บริเวณที่มีแสงแดดส่องถึงโดยตรง หรือใกล้กับเตาทำอาหาร เพราะจะทำให้ประสิทธิภาพการทำความเย็นลดลง และการใช้พลังงานมากขึ้น ควรเว้นระยะห่างรอบตู้เย็นให้เพียงพอสำหรับการระบายอากาศ เพื่อป้องกันความร้อนสูง เสียงดัง และความเสียหายแก่ตู้เย็น</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้สอดคล้องกับข้อเท็จจริงหลักใน Ground Truth แต่มีรายละเอียดเพิ่มเติมที่ไม่ได้มาจาก Context ที่ให้มา</td>
-                </tr>
-        
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>ถ้าอาหารมีกลิ่นแรง ควรจัดการอย่างไรก่อนนำเข้าตู้เย็น</td>
-                    <td>ไม่พบข้อมูลในเอกสารที่แนบมาเกี่ยวกับการจัดการอาหารที่มีกลิ่นแรงก่อนนำเข้าตู้เย็น แต่ตามหลักการทั่วไป ควรห่ออาหารที่มีกลิ่นแรงด้วยถุงพลาสติกหรือภาชนะที่ปิดฝาแน่นเพื่อป้องกันกลิ่นกระจายไปยังอาหารชนิดอื่นๆ ในตู้เย็น</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบตรงกับความจริงทั่วไป แต่ไม่มีข้อมูลสนับสนุนจากบริบทที่ให้มา</td>
-                </tr>
-        
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>หลังจากเคลื่อนย้ายตู้เย็น ควรทิ้งช่วงเวลาอย่างน้อยกี่ชั่วโมงก่อนเสียบปลั๊ก</td>
-                    <td>หลังจากเคลื่อนย้ายตู้เย็น ควรทิ้งช่วงเวลาอย่างน้อย 3 ชั่วโมงก่อนเสียบปลั๊กใหม่ เพื่อป้องกันความเสียหายและยืดอายุการใช้งานของตู้เย็น 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><table class="min-w-full text-sm text-left border-collapse border"><thead class="bg-gray-100"><tr><th class="px-4 py-2 border">คำเตือน</th><th class="px-4 py-2 border"></th><th class="px-4 py-2 border">หมายเหตุ</th></tr></thead><tbody><tr><td class="px-4 py-2 border">■ ถอดปลั �กตู้เย็นออกก่อน เพื �อป้องกันไฟฟ้าช๊อต</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">• เพื �อป้องกันตู้เย็นเกิดความเสียหาย ไม่ควรใช้นำ้ยาทำความสะอาด หรือสาร</td></tr><tr><td class="px-4 py-2 border">■ เมื �อต้องการทำความสะอาดตู้เย็นอย่าราดนำ้ลงบนตัวตู</td><td class="px-4 py-2 border">้ทั �งภายนอก</td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">ละลายที �ไม่ได้เจือจางทำความสะอาดตู้เย็น (แล็กเกอร์, สี, ผงขัดเงา, เบนซิน,</td></tr><tr><td class="px-4 py-2 border">และภายใน เพราะอาจเกิดสนิมหรือไฟฟ้ารั �วได้</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">นำ้ร้อน, ฯลฯ)</td></tr><tr><td class="px-4 py-2 border">คำเตือน</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">• เมื �อปลั �กเสียบตู้เย็นหลุดออกจากเต้ารับ อย่าเสียบปลั �กในทันที ควรรอ</td></tr><tr><td class="px-4 py-2 border">เพื �อป้องกันการเกิดรอยร้าวที �ผิวภายในของตู</td><td class="px-4 py-2 border">้เย็น และส่วนประกอบที �เป็น</td><td class="px-4 py-2 border">ประมาณ � นาที แล้วจึงเสียบปลั �กใหม่ ทั �งนี �เพื �อป้องกันไม่ให้คอมเพรสเซอร์</td></tr><tr><td class="px-4 py-2 border">พลาสติก ควรปฏิบัติตามคำแนะนำดังต่อไปนี</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">เสียหายและเพื �อให้มีอายุการใช้งานได้นาน</td></tr><tr><td class="px-4 py-2 border">• คราบนำ้มันจากอาหารที �ติดอยู่บนส่วนประกอบที</td><td class="px-4 py-2 border">�เป็นพลาสติก สามารถ</td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">• ห้ามโยนสิ �งของใส่ผนังด้านในตู้เย็น เพราะอาจทำให้ผนังตู้เย็นเกิดรอยยุบ</td></tr><tr><td class="px-4 py-2 border">ทำให้เกิดรอยร้าวได้ จึงควรเช็ดออกให้สะอาด</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">หรือเกิดรอยแตกร้าว</td></tr><tr><td class="px-4 py-2 border">• สารเคมีบางชนิดอาจทำให้เกิดรอยร้าวที �ผิวภายในตู</td><td class="px-4 py-2 border">้เย็น และชิ �นส่วนที</td><td class="px-4 py-2 border"></td></tr></tbody></table></div>
+<div class='answer-tables-content'><img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/table_p002_002.png' alt='Table Data' class='max-w-full h-auto rounded shadow-sm border mx-auto' /></div>
 </td>
-                    <td><span class="score s-3">3</span></td>
-                    <td style="color:gray;">คำตอบที่ได้ระบุว่าควรทิ้งช่วงเวลาอย่างน้อย 3 ชั่วโมง ซึ่งไม่ตรงกับข้อมูลที่ถูกต้องคือ 2 ชั่วโมง แต่ยังอยู่ในช่วงเวลาที่สามารถยอมรับได้ และมีการอธิบายเพิ่มเติมเกี่ยวกับเหตุผลในการทิ้งช่วงเวลา</td>
-                </tr>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">AI ตอบกลับโดยใช้ Tag แสดงตารางตามที่ผู้ใช้ขอดู ซึ่งตรงตามคำตอบที่คาดหวัง</td>
+                        </tr>
         
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>การปรับอุณหภูมิช่องแช่เย็นให้เย็นน้อยลง ต้องปรับปุ่มควบคุมไปทางตัวเลขใด (มากหรือน้อย)</td>
-                    <td>การปรับอุณหภูมิช่องแช่เย็นให้เย็นน้อยลง ต้องปรับปุ่มควบคุมไปทางตัวเลขที่น้อยลง (ทางขวา) ตามที่แสดงในไดอะแกรมควบคุมอุณหภูมิของตู้เย็น:
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">27</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ขอดูรูปถ่ายของนักศึกษาที่สมัครงานหน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">
+<img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/img_p001_002.png' alt='Image Data' class='max-w-full h-auto rounded shadow-sm border mx-auto my-4' />
 
-- **ข้างซ้าย (MAX.)**: ระบุว่าเป็นจุดที่เย็นที่สุด (Coldest)
-- **ข้างขวา (MIN.)**: ระบุว่าเป็นจุดที่ไม่เย็น (less cold)
 
-ดังนั้น หากต้องการให้ช่องแช่เย็นเย็นน้อยลง ควรปรับปุ่มควบคุมไปทางตัวเลขที่น้อยลง (ทางขวา) ของปุ่มควบคุมอุณหภูมิ
+รูปภาพนี้เป็นรูปถ่ายบุคคล (Portrait/Headshot) ของผู้ชายวัยรุ่นหรือวัยหนุ่ม ซึ่งอาจเป็นรูปถ่ายของนักศึกษาที่สมัครงานสหกิจศึกษา
 
-นี่คือรูปภาพที่ช่วยอธิบายการปรับอุณหภูมิได้ชัดเจน [SHOW_IMAGE: ingested/operation_manual_sharp/images/img_p009_023.png] รูปภาพนี้เป็นไดอะแกรมแสดงระบบควบคุมอุณหภูมิของตู้เย็น (Refrigerator) และช่องแช่แข็ง (Freezer) พร้อมกับการระบุจุดการตั้งค่าอุณหภูมิ</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับความจริงที่กำหนด และมีการอธิบายเพิ่มเติมที่ชัดเจนและถูกต้องตามบริบทที่ให้มา</td>
-                </tr>
+**รายละเอียด:**
+- **บุคคล:** ชายหนุ่มชาวเอเชียมีใบหน้าเรียวผมสีดำสั้นจัดแต่งทรงเรียบร้อย ดูสะอาดตา เขากำลังมองตรงมาที่กล้องด้วยสีหน้าเป็นกลางและจริงจัง
+- **เครื่องแต่งกาย:** สวมเสื้อเชิ้ตแขนยาวสีขาว ผูกเนคไทสีเทาเข้มหรือสีดำอย่างเป็นระเบียบ ที่เนคไทใกล้กับปมผูกมีเข็มกลัดเล็กๆ สีทองหรือสีอ่อนติดอยู่
+- **พื้นหลัง:** เป็นสีฟ้าสดใส (Bright Blue) เรียบไม่มีลวดลายใดๆ ซึ่งเป็นพื้นหลังที่นิยมใช้สำหรับรูปถ่ายติดบัตรหรือรูปถ่ายที่ต้องการความเรียบง่ายและเป็นทางการ
+- **แสงสว่าง:** ภาพมีแสงสว่างที่ทั่วถึงและสม่ำเสมอ ทำให้เห็นรายละเอียดบนใบหน้าและเครื่องแต่งกายได้อย่างชัดเจน โดยไม่มีเงาตกกระทบที่รบกวน</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบของ AI มีการใช้ Tag [SHOW_IMAGE] ในการแสดงรูปถ่ายนักศึกษา ตรงตามที่ผู้ใช้ขอดูรูปถ่าย จึงถือว่าตอบถูกต้องตามคำถาม</td>
+                        </tr>
         
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>ถ้าต้องการถอดชั้นวางของแบบเลื่อน (Slide tray) ต้องทำขั้นตอนใดบ้าง</td>
-                    <td>เพื่อถอดชั้นวางของแบบเลื่อน (Slide tray) ออกจากตู้เย็น คุณสามารถทำตามขั้นตอนดังนี้:
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">28</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">ในเอกสารมีรูปภาพใบหน้าของผู้สมัครไหม ขอดูภาพนั้นหน่อย</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">มีรูปภาพใบหน้าของผู้สมัครในเอกสารครับ สามารถดูได้ตามนี้:
 
-1. **บิดปุ่มล็อกชั้นวาง (Slide tray stopper knob)**: บิดปุ่มล็อกชั้นวางในทิศทางตรงข้ามเข็มนาฬิกา (counterclockwise) เพื่อปลดล็อก
-   - ดูรูปภาพประกอบเพื่อความเข้าใจเพิ่มเติม: [SHOW_IMAGE: ingested/operation_manual_sharp/images/img_p007_020.png]
 
-2. **ดึงชั้นวางออก**: หลังจากปลดล็อกแล้ว ค่อยๆ ดึงชั้นวางออก
+<img src='/ingested/015_co-op_03_ใบสมัครงานสหกิจศึกษา_update/images/img_p001_002.png' alt='Image Data' class='max-w-full h-auto rounded shadow-sm border mx-auto my-4' />
 
-ขั้นตอนเหล่านี้จะช่วยให้คุณสามารถถอดชั้นวางของแบบเลื่อนออกจากตู้เย็นได้อย่างง่ายดายและปลอดภัย</td>
-                    <td><span class="score s-3">3</span></td>
-                    <td style="color:gray;">คำตอบมีขั้นตอนเพิ่มเติมที่ไม่ได้ระบุใน Ground Truth และไม่มีข้อมูลใน Context ที่สนับสนุนขั้นตอนเหล่านี้ แต่ขั้นตอนการดึงชั้นวางออกตรงๆ ยังคงอยู่ในคำตอบ</td>
-                </tr>
+
+**รายละเอียด:**
+- **บุคคล:** ชายหนุ่มชาวเอเชียมีใบหน้าเรียวผมสีดำสั้นจัดแต่งทรงเรียบร้อย
+- **เครื่องแต่งกาย:** สวมเสื้อเชิ้ตแขนยาวสีขาวผูกเนคไทสีเทาเข้มหรือสีดำ
+- **พื้นหลัง:** สีฟ้าสดใส
+- **แสงสว่าง:** แสงสว่างทั่วถึงและสม่ำเสมอ
+
+รูปภาพนี้เป็นรูปถ่ายบุคคลในลักษณะครึ่งตัวแบบทางการ.</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบของ AI ตอบถูกต้องและครบถ้วน มีการใช้ Tag [SHOW_IMAGE] เพื่อแสดงรูปภาพของผู้สมัครตามที่ผู้ใช้ขอ และมีรายละเอียดเพิ่มเติมที่แม่นยำ</td>
+                        </tr>
         
-                <tr class="Medium">
-                    <td><strong>Medium</strong></td>
-                    <td>ข้อแนะนำเพิ่มเติมเพื่อลดผลกระทบต่อสิ่งแวดล้อมเกี่ยวกับการเปิดประตูตู้เย็นคืออะไร</td>
-                    <td>ไม่พบข้อมูลในเอกสารที่แนบมาเกี่ยวกับข้อแนะนำเพิ่มเติมเพื่อลดผลกระทบต่อสิ่งแวดล้อมเกี่ยวกับการเปิดประตูตู้เย็น</td>
-                    <td><span class="score s-1">1</span></td>
-                    <td style="color:gray;">คำตอบที่ได้ไม่ตรงกับข้อเท็จจริงที่กำหนด และไม่มีข้อมูลในบริบทที่สนับสนุนคำตอบ</td>
-                </tr>
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">29</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">จากข้อมูลในเอกสาร ทักษะ Soft Skill หรือลักษณะนิสัยการทำงานที่ผู้สมัครควรมีสำหรับตำแหน่งนี้คืออะไร?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากข้อมูลในเอกสาร ทักษะ Soft Skill หรือลักษณะนิสัยการทำงานที่ผู้สมัครควรมีสำหรับตำแหน่ง front end developer ที่ Better Soft Co., Ltd. คือ:
+
+- มีความรับผิดชอบ
+- สามารถทำงานเป็นทีมได้อย่างมีประสิทธิภาพ</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">ตอบถูกต้อง ครบถ้วน และตรงตามคำตอบที่คาดหวัง</td>
+                        </tr>
         
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>ทำไมไฟ LED ในช่องแช่เย็นถึงกระพริบ และต้องเรียกช่างหรือไม่</td>
-                    <td>ไฟ LED ในช่องแช่เย็นของตู้เย็น SHARP กระพริบเป็นอาการปกติเมื่อตู้เย็นทำงานในโหมดการทำน้ำแข็งด่วน (EXPRESS ICE MAKING) ซึ่งการทำงานในโหมดนี้จะสิ้นสุดโดยอัตโนมัติในเวลาประมาณ 1 ชั่วโมง ดังนั้น ไม่จำเป็นต้องเรียกช่างมาตรวจสอบ
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">30</td>
+                            <td style="text-align: center;"><span class="badge-hard">HARD</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">วิเคราะห์จากสายงานที่สมัครและอาชีพเป้าหมาย คิดว่านักศึกษาคนนี้ถนัดงานด้านไหน?</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">จากข้อมูลที่มีอยู่ นักศึกษาคนนี้มีความสนใจและมีทักษะในด้านต่างๆ ดังนี้:
 
-หากต้องการยกเลิกการทำงานในโหมดการทำน้ำแข็งด่วน สามารถกดปุ่มการทำน้ำแข็งด่วนค้างไว้ 3 วินาทีอีกครั้ง หลอดไฟในช่องแช่เย็นจะหยุดกระพริบ
+1. **การพัฒนาเว็บไซต์และเว็บแอปพลิเคชัน:**
+   - ออกแบบและพัฒนาเว็บไซต์หรือเว็บแอปพลิเคชัน โดยใช้ HTML, CSS, JavaScript และ Framework เช่น React หรือ Vue.js
+   - มีทักษะการเขียนโค้ด Responsive Design และเข้าใจการทำงานร่วมกับ Back-End
 
-หากไฟ LED ยังคงกระพริบหลังจากเวลา 1 ชั่วโมง หรือมีปัญหาอื่น ๆ ที่ไม่สามารถแก้ไขได้ตามคำแนะนำ ควรติดต่อช่างเพื่อตรวจสอบและแก้ไขปัญหา</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับข้อเท็จจริงและมีรายละเอียดเพิ่มเติมที่เป็นประโยชน์ เช่น วิธีการยกเลิกโหมดการทำน้ำแข็งด่วนและขั้นตอนการติดต่อช่างหากมีปัญหาต่อเนื่อง</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>หากพบว่าด้านข้างของตู้เย็นมีความร้อนเกิดขึ้น ถือว่าผิดปกติหรือไม่ เพราะเหตุใด</td>
-                    <td>การที่ด้านข้างของตู้เย็นมีความร้อนเกิดขึ้น ไม่ถือว่าเป็นเรื่องผิดปกติ แต่เป็นอาการที่เกิดขึ้นตามปกติในการทำงานของตู้เย็น ตามข้อมูลในเอกสารที่แนบมา:
+2. **การเขียนโค้ดและพัฒนาซอฟต์แวร์:**
+   - อาชีพเป้าหมายที่ระบุไว้คือ Programmer, Cyber Security, และ Software Engineer
+   - มีประสบการณ์การอบรมในด้าน AI for Office Automation, Super AI Engineer, และ Yala Hackathon
 
-> "หลีกเลี่ยงการสัมผัสข้างตู้เย็นขณะตู้เย็นทำงาน เนื่องจากผนังด้านข้างจะมีอุณหภูมิสูง ซึ่งถือเป็นอาการปกติในการทำงานของตู้เย็น" [SOURCE 6]
+3. **การถ่ายทำและตัดต่อวิดีโอ:**
+   - มีความสามารถในการถ่ายทำและตัดต่อรูปถ่ายและวิดีโอ
 
-ดังนั้น ความร้อนที่เกิดขึ้นที่ด้านข้างของตู้เย็นเป็นผลจากการทำงานของระบบทำความเย็นภายในตู้เย็น ซึ่งต้องระบายความร้อนออกสู่ภายนอก จึงทำให้ผนังด้านข้างมีอุณหภูมิสูงขึ้น อย่างไรก็ตาม ควรหลีกเลี่ยงการสัมผัสบริเวณนี้เพื่อป้องกันการเกิดอุบัติเหตุจากการโดนขอบโลหะบาดหรือความร้อนสูง</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับตรงกับความจริงและมีการสนับสนุนจากข้อมูลที่ให้มา ซึ่งอธิบายว่าความร้อนที่ด้านข้างของตู้เย็นเป็นเรื่องปกติและเป็นผลจากการทำงานของระบบทำความเย็น</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>ถ้าอาหารในช่องแช่เย็นเป็นน้ำแข็ง (Freeze) ทั้งที่ไม่ได้ปรับอุณหภูมิสูงสุด เกิดจากสาเหตุใดได้บ้าง</td>
-                    <td>การที่อาหารในช่องแช่เย็นเป็นน้ำแข็ง (Freeze) ทั้งที่ไม่ได้ปรับอุณหภูมิสูงสุด อาจเกิดจากหลายสาเหตุ ตามที่ระบุในเอกสาร:
+4. **การสร้าง Infographic:**
+   - มีทักษะในการสร้าง Infographic
 
-1. **การตั้งค่าอุณหภูมิช่องแช่แข็ง (Freezer) ที่สูงเกินไป**:
-   - หากคุณตั้งค่า FREEZER TEMP. CONTROL ที่ระดับ MAX หรือระดับที่สูงเกินไป อาจทำให้ช่องแช่เย็นไม่ได้รับอากาศเย็นเพียงพอ ซึ่งอาจทำให้อาหารในช่องแช่เย็นเย็นจัดจนกลายเป็นน้ำแข็ง 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
-
-
-2. **การควบคุมอุณหภูมิที่ไม่เหมาะสม**:
-   - ถ้าคุณตั้งค่า REFRIGERATOR TEMP. CONTROL ที่ระดับที่ต่ำเกินไป อาจทำให้ช่องแช่เย็นเย็นเกินไป จนทำให้อาหารกลายเป็นน้ำแข็ง
-
-3. **ปัญหาทางเทคนิค**:
-   - อาจมีปัญหาทางเทคนิคในระบบควบคุมอุณหภูมิ ทำให้การควบคุมอุณหภูมิไม่ทำงานตามที่ตั้งค่า
-
-4. **การเปิดปิดตู้เย็นบ่อยครั้ง**:
-   - การเปิดปิดตู้เย็นบ่อยครั้งอาจทำให้อากาศร้อนจากภายนอกเข้ามาภายในตู้เย็น ทำให้ระบบต้องทำงานหนักขึ้นและอาจทำให้อาหารในช่องแช่เย็นเย็นจัดจนกลายเป็นน้ำแข็ง
-
-5. **การวางอาหารในช่องแช่เย็น**:
-   - หากอาหารถูกวางไว้ใกล้กับตัวควบคุมอุณหภูมิหรือช่องลมเย็น อาจทำให้อาหารนั้นเย็นจัดจนกลายเป็นน้ำแข็ง
-
-หากพบปัญหาดังกล่าว ควรตรวจสอบการตั้งค่าอุณหภูมิและวิธีการใช้งานตู้เย็นให้เหมาะสม หากปัญหายังคงเกิดขึ้น ควรติดต่อศูนย์บริการเพื่อตรวจสอบและแก้ไขปัญหาทางเทคนิค</td>
-                    <td><span class="score s-3">3</span></td>
-                    <td style="color:gray;">คำตอบมีรายละเอียดเพิ่มเติมที่ไม่ได้ระบุใน Ground Truth และบางส่วนไม่สอดคล้องกับบริบท เช่น การตั้งค่าอุณหภูมิช่องแช่แข็งที่สูงเกินไป ซึ่งไม่ได้ทำให้อาหารในช่องแช่เย็นกลายเป็นน้ำแข็ง แต่ทำให้ช่องแช่เย็นไม่ได้รับอากาศเย็นเพียงพอ</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>เสียงดังคล้ายน้ำไหลจ๊อกๆ ในตู้เย็นเกิดจากอะไร</td>
-                    <td>เสียงดังคล้ายน้ำไหลจ๊อกๆ ในตู้เย็นอาจเกิดจากหลายสาเหตุ ตามที่ระบุในตารางปัญหาและวิธีแก้ไข 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
- ซึ่งมีรายละเอียดดังนี้:
-
-- **เมื่อตู้เย็นทำงาน:** เสียงดังคล้ายน้ำไหลอาจเกิดจากการทำงานของระบบทำความเย็น ซึ่งเป็นเสียงที่เกิดขึ้นจากการไหลของน้ำยาทำความเย็นภายในท่อ
-- **เมื่อมีน้ำหยด:** เสียงดังคล้ายน้ำไหลอาจเกิดจากน้ำที่หยดลงบนชิ้นส่วนภายในตู้เย็น เช่น น้ำที่หยดลงบนคอยล์ทำความเย็น ซึ่งเป็นกระบวนการปกติในการควบคุมอุณหภูมิ
-
-หากเสียงดังนี้ยังคงทำให้คุณกังวล ควรตรวจสอบว่าตู้เย็นมีการติดตั้งและใช้งานอย่างถูกต้อง หากยังมีปัญหาอยู่ ควรติดต่อศูนย์บริการเพื่อขอความช่วยเหลือเพิ่มเติม</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับมีความถูกต้องและครอบคลุมสาเหตุที่เป็นไปได้ของเสียงดังคล้ายน้ำไหลในตู้เย็น แต่ไม่ได้ระบุว่าเป็นอาการปกติอย่างชัดเจนเท่ากับ Ground Truth</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>ทำไมถึงห้ามใช้น้ำร้อนทำความสะอาดชิ้นส่วนพลาสติกภายในตู้เย็น</td>
-                    <td>การใช้น้ำร้อนทำความสะอาดชิ้นส่วนพลาสติกภายในตู้เย็นอาจทำให้เกิดรอยร้าวได้ เนื่องจากน้ำร้อนอาจทำให้พลาสติกอ่อนตัวและเสื่อมสภาพ ดังนั้นควรใช้น้ำอุ่นผสมน้ำยาทำความสะอาดแทน และควรล้างด้วยน้ำสะอาดอีกครั้งเพื่อป้องกันการเกิดรอยร้าวจากสารสบู่ที่เหลืออยู่ 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><table class="min-w-full text-sm text-left border-collapse border"><thead class="bg-gray-100"><tr><th class="px-4 py-2 border">คำเตือน</th><th class="px-4 py-2 border"></th><th class="px-4 py-2 border">หมายเหตุ</th></tr></thead><tbody><tr><td class="px-4 py-2 border">■ ถอดปลั �กตู้เย็นออกก่อน เพื �อป้องกันไฟฟ้าช๊อต</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">• เพื �อป้องกันตู้เย็นเกิดความเสียหาย ไม่ควรใช้นำ้ยาทำความสะอาด หรือสาร</td></tr><tr><td class="px-4 py-2 border">■ เมื �อต้องการทำความสะอาดตู้เย็นอย่าราดนำ้ลงบนตัวตู</td><td class="px-4 py-2 border">้ทั �งภายนอก</td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">ละลายที �ไม่ได้เจือจางทำความสะอาดตู้เย็น (แล็กเกอร์, สี, ผงขัดเงา, เบนซิน,</td></tr><tr><td class="px-4 py-2 border">และภายใน เพราะอาจเกิดสนิมหรือไฟฟ้ารั �วได้</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">นำ้ร้อน, ฯลฯ)</td></tr><tr><td class="px-4 py-2 border">คำเตือน</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">• เมื �อปลั �กเสียบตู้เย็นหลุดออกจากเต้ารับ อย่าเสียบปลั �กในทันที ควรรอ</td></tr><tr><td class="px-4 py-2 border">เพื �อป้องกันการเกิดรอยร้าวที �ผิวภายในของตู</td><td class="px-4 py-2 border">้เย็น และส่วนประกอบที �เป็น</td><td class="px-4 py-2 border">ประมาณ � นาที แล้วจึงเสียบปลั �กใหม่ ทั �งนี �เพื �อป้องกันไม่ให้คอมเพรสเซอร์</td></tr><tr><td class="px-4 py-2 border">พลาสติก ควรปฏิบัติตามคำแนะนำดังต่อไปนี</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">เสียหายและเพื �อให้มีอายุการใช้งานได้นาน</td></tr><tr><td class="px-4 py-2 border">• คราบนำ้มันจากอาหารที �ติดอยู่บนส่วนประกอบที</td><td class="px-4 py-2 border">�เป็นพลาสติก สามารถ</td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">• ห้ามโยนสิ �งของใส่ผนังด้านในตู้เย็น เพราะอาจทำให้ผนังตู้เย็นเกิดรอยยุบ</td></tr><tr><td class="px-4 py-2 border">ทำให้เกิดรอยร้าวได้ จึงควรเช็ดออกให้สะอาด</td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td></tr><tr><td class="px-4 py-2 border"></td><td class="px-4 py-2 border"></td><td class="px-4 py-2 border">หรือเกิดรอยแตกร้าว</td></tr><tr><td class="px-4 py-2 border">• สารเคมีบางชนิดอาจทำให้เกิดรอยร้าวที �ผิวภายในตู</td><td class="px-4 py-2 border">้เย็น และชิ �นส่วนที</td><td class="px-4 py-2 border"></td></tr></tbody></table></div>
-</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับมีความถูกต้องและสอดคล้องกับข้อเท็จจริงที่ให้มา แต่มีรายละเอียดเพิ่มเติมที่ไม่ได้ระบุในข้อเท็จจริง เช่น การแนะนำให้ใช้น้ำอุ่นผสมน้ำยาทำความสะอาดแทน และการล้างด้วยน้ำสะอาดอีกครั้ง</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>หากไฟดับเป็นเวลานาน ควรปฏิบัติต่ออาหารในตู้เย็นอย่างไร</td>
-                    <td>ไม่พบข้อมูลในเอกสารที่แนบมาเกี่ยวกับการปฏิบัติต่ออาหารในตู้เย็นเมื่อไฟดับเป็นเวลานาน อย่างไรก็ตาม ตามทั่วไปแล้ว ควรปฏิบัติตามคำแนะนำดังนี้:
-
-1. อย่าเปิดประตูตู้เย็นหากไม่จำเป็น เพื่อรักษาอุณหภูมิภายในตู้เย็นให้เย็นที่สุดเท่าที่จะทำได้
-2. หากไฟดับเป็นเวลานานเกิน 4 ชั่วโมง ควรย้ายอาหารที่ต้องการความเย็นสูง เช่น เนื้อสัตว์ ปลา ไก่ และอาหารปรุงสุก ไปเก็บในช่องแช่แข็งหรือใช้ถุงแช่แข็งเพื่อรักษาความเย็น
-3. หลังจากไฟกลับมาใช้งานได้ ควรตรวจสอบวันหมดอายุและสภาพอาหาร หากอาหารมีกลิ่นไม่ปกติ หรือมีการเปลี่ยนแปลงในลักษณะ ควรทิ้งอาหารนั้นทิ้ง
-
-อย่างไรก็ตาม คำแนะนำนี้เป็นข้อมูลทั่วไป และควรตรวจสอบคำแนะนำเฉพาะของผู้ผลิตตู้เย็นของคุณเพื่อความปลอดภัยและความมั่นใจในการใช้งาน</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับมีความถูกต้องและครอบคลุมมากกว่า Ground Truth แต่ไม่มีข้อมูลจาก Context สนับสนุน</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>สาร Cyclo Pentane ที่ใช้เป็นฉนวน มีความเป็นมิตรต่อสิ่งแวดล้อมอย่างไร</td>
-                    <td>สาร Cyclo Pentane ที่ใช้เป็นฉนวนในตู้เย็นรุ่นต่างๆ ของ Sharp มีความเป็นมิตรต่อสิ่งแวดล้อมอย่างมาก เนื่องจากเป็นสารที่ไม่มีส่วนผสมของ CFC (Chlorofluorocarbons) ซึ่งเป็นสารที่ทำลายชั้นโอโซน ดังนั้น Cyclo Pentane จึงเป็นทางเลือกที่ดีสำหรับการใช้เป็นฉนวนในตู้เย็น โดยไม่ก่อให้เกิดผลกระทบต่อสิ่งแวดล้อม
-
-ตามข้อมูลในคู่มือการใช้งานตู้เย็น Sharp (SOURCE 1) ระบุว่าสาร Cyclo Pentane ที่ใช้เป็นฉนวนในตู้เย็นเป็น "NON CFC 100%" ซึ่งหมายความว่าไม่มีส่วนผสมของ CFC เลย ทำให้สารนี้เป็นทางเลือกที่เป็นมิตรต่อสิ่งแวดล้อม</td>
-                    <td><span class="score s-5">5</span></td>
-                    <td style="color:gray;">คำตอบตรงกับข้อเท็จจริงที่กำหนดและได้รับการสนับสนุนจากบริบทที่ให้มา</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>ระบบกำจัดกลิ่น (Deodorizer) สามารถกำจัดกลิ่นได้ทั้งหมดหรือไม่</td>
-                    <td>ไม่พบข้อมูลที่ตรงกับคำถามในเอกสารที่แนบมาครับ (Relevance Score ต่ำเกินไป)</td>
-                    <td><span class="score s-2">2</span></td>
-                    <td style="color:gray;">คำตอบไม่ตรงกับข้อเท็จจริงที่กำหนด และไม่มีบริบทที่สนับสนุนคำตอบ</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>หากตู้เย็นไม่เย็นเลย ควรตรวจสอบจุดใดเป็นอันดับแรก</td>
-                    <td>ไม่พบข้อมูลในเอกสารที่แนบมาเกี่ยวกับการตรวจสอบจุดใดเป็นอันดับแรกเมื่อตู้เย็นไม่เย็นเลย แต่จากตารางปัญหาและวิธีแก้ไขในเอกสาร (ดูตาราง 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><pre class='text-xs overflow-auto p-2 bg-gray-100'>No content</pre></div>
- และ 
-<div class='my-4 overflow-x-auto border rounded-lg shadow-sm bg-white p-2'><table class="min-w-full text-sm text-left border-collapse border"><thead class="bg-gray-100"><tr><th class="px-4 py-2 border">ปญหา</th><th class="px-4 py-2 border">การแก้ไข</th></tr></thead><tbody><tr><td class="px-4 py-2 border">เมืูตะตแอูรว้ลแน็ยเ้นอ้รกึส้</td><td class="px-4 py-2 border">ัทงา้ขนา้ดิตกปยดโูตงอขงอสงืนเ นอ้ระจน็ยเ้ืพเ้วไนอ้รมาวคยาบะรงผแนอ่ซกาจงอนอไนักงอปอ้ำูตบอระากเ</td></tr><tr><td class="px-4 py-2 border">เมืูตอึขดิกเงัดงยีสเีมน็ยเ้้น</td><td class="px-4 py-2 border">• • • • ืถูตกาหิตกปน็ปเา่วอ่ีนปไอ่ตงัดงยีสเีมน็ยเ้ิรเรากกาจดิกเงยีสเูรคกัส ์รอซเสรพเงอขนางำทมันงยีสเ่้นจะหายไปัดะจ์รอซเสรพเมอคงอขงยีสเงขึ �นนยาละลรากกาจงัลห ีทนัทิตัมนโตัอง็ขแำีทงยีสเิกเดขึ �นจากการทำงานของเครื่อง การไหลของนู้ตงอขๆงา่ต์ณรกปุออืรห ายำน็ยเ้ันงยีสเ วา้รกตแงยีสเนอืมหเงยีสเัดนงขึ �นเนื �อลแนใยาภงันผงอขวัตยายขรากกาจงะชิ �นงานภายใน ขณะทีูตน็ยเมาวคำทงัลำกน็ยเ้ • ัลงยีสเ่นเอีันงยีสเ ดยิชงอขนักีสดยีสเรากะลแนใยาภ์ณรกปุองอขวัตยายขรากกาจดิกเนนว่สนูตนใยาภน็ยเ้</td></tr><tr><td class="px-4 py-2 border">เมืนดยหดิกเอนอืรหำีทง็ขแำนในา้ดณวเิรบูตกอนะลแน็ยเ้</td><td class="px-4 py-2 border">• • • นด็ลกเด็ชเกยีปเา้ผ้ชใ้หในดยหด็ชเง้หแา้ผ้ชใะลแง็ขแำ้ำ โดยทีึขดิกเจาอดิกเรากีณรกดใีณรกกาจนหนึไอ่ตงัดงปนีาวคีมกอนยาภิมูภหณุอมชื �นงูสๆยอ่บูตะรปดปะลแดปเอาหารทีาวคีมาษกัรบ็กเมชื �น )าษกัรบ็กเนอ่กราหาออ่หรากีมรวค( งูส</td></tr><tr><td class="px-4 py-2 border">ง็ขแนจดัจน็ยเน็ยเ่ชแงอ่ชนใราหาอ</td><td class="px-4 py-2 border">• ูตา่วูดบอสจวรตีทนานาลวเน็ปเนางำทรากีมน็ยเ้่การตัีท้วไิมูภณุอง่มไอืรห XAM • ทีติมูภหณุอมอ้ลดวแพาภสัตรากีมะจา่ว้มแงึถ ้ดไง็ขแนจดัจน็ยเราหาอ้หใำทถรามาส็กำ้งีท้วไิมูภหณุอมาต็ก NIM ่</td></tr><tr><td class="px-4 py-2 border">ิลกดิกเูตนใยาภ์คงสะรปงึพ่มไน</td><td class="px-4 py-2 border">• • ุหอ่หรากีมรวคีทราหาอม้ิลกีมดิชดิม้หใงรแนลกดูดวัติลกดูดถรามาส่มไนัท้ดไน้งหมด</td></tr><tr><td class="px-4 py-2 border">หลอดไฟในช่องแช่เย็นกระพริบ</td><td class="px-4 py-2 border">ถือเป็นอาการปกติหากตู้เย็นทำงานในโหมดการทำนำแข็งด่วน โดยการทำงานในโหมดนี �จะสิ �นสุดโดยอัตโนมัติในเวลาประมาณ � ช.ม.</td></tr></tbody></table></div>
-) มีการกล่าวถึงปัญหาต่างๆ ที่อาจเกิดขึ้นกับตู้เย็น ซึ่งคุณสามารถตรวจสอบตามข้อแนะนำในตารางเหล่านี้เพื่อหาสาเหตุของปัญหาได้
-
-อย่างไรก็ตาม แนะนำให้ตรวจสอบส่วนต่อไปนี้เป็นอันดับแรก:
-1. **ปลั๊กไฟ:** ตรวจสอบว่าตู้เย็นได้รับไฟฟ้าหรือไม่ ด้วยการดูว่าไฟแสดงสถานะบนตู้เย็นทำงานหรือไม่
-2. **สวิตช์เปิด-ปิด:** ตรวจสอบว่าสวิตช์เปิด-ปิดของตู้เย็นเปิดอยู่หรือไม่
-3. **อุณหภูมิห้อง:** ตรวจสอบว่าอุณหภูมิห้องไม่สูงเกินไปจนทำให้ตู้เย็นทำงานไม่ได้อย่างมีประสิทธิภาพ
-
-หากปัญหายังไม่ได้รับการแก้ไข ควรติดต่อศูนย์บริการเพื่อขอความช่วยเหลือจากช่างผู้ชำนาญการ</td>
-                    <td><span class="score s-4">4</span></td>
-                    <td style="color:gray;">คำตอบที่ได้รับมีข้อมูลที่สอดคล้องกับความจริง (Ground Truth) โดยแนะนำให้ตรวจสอบปลั๊กไฟและสวิตช์เปิด-ปิดเป็นอันดับแรก แต่ไม่ได้กล่าวถึงการตรวจสอบฟิวส์/เบรกเกอร์ของบ้าน ซึ่งเป็นส่วนหนึ่งของความจริง นอกจากนี้ คำตอบยังไม่ได้รับการสนับสนุนโดยตรงจากบริบทที่ให้มา</td>
-                </tr>
-        
-                <tr class="Hard">
-                    <td><strong>Hard</strong></td>
-                    <td>ทำไมไม่ควรวางสิ่งของหนักหรืออันตรายไว้บนหลังตู้เย็น</td>
-                    <td>ไม่พบข้อมูลในเอกสารที่แนบมาเกี่ยวกับการไม่ควรวางสิ่งของหนักหรืออันตรายไว้บนหลังตู้เย็นโดยตรง อย่างไรก็ตาม ตามข้อควรระวังทั่วไปในการใช้ตู้เย็น มักจะแนะนำให้หลีกเลี่ยงการวางสิ่งของหนักหรืออันตรายบนตู้เย็น เนื่องจากอาจทำให้เกิดความเสียหายต่อตู้เย็น หรืออาจเป็นอันตรายต่อผู้ใช้ เช่น สิ่งของอาจหล่นทับ หรือทำให้ตู้เย็นเสียรูปได้ แต่ข้อมูลเฉพาะเจาะจงไม่ได้ระบุไว้ในเอกสารที่มีอยู่</td>
-                    <td><span class="score s-3">3</span></td>
-                    <td style="color:gray;">คำตอบไม่ตรงกับข้อเท็จจริงที่กำหนดไว้ แต่ให้ข้อมูลทั่วไปที่เกี่ยวข้อง ซึ่งมีความสมเหตุสมผล แต่ไม่มีข้อมูลเฉพาะเจาะจงจากบริบทที่ให้มา</td>
-                </tr>
-        </tbody></table></div></body></html>
+จากข้อมูลดังกล่าว นักศึกษาคนนี้มีความถนัดและความสนใจในด้านการพัฒนาซอฟต์แวร์และการเขียนโค้ดเป็นหลัก โดยเฉพาะการพัฒนาเว็บไซต์และเว็บแอปพลิเคชัน ซึ่งสอดคล้องกับอาชีพเป้าหมายที่ระบุไว้ เช่น Programmer, Cyber Security, และ Software Engineer ดังนั้น นักศึกษาคนนี้น่าจะมีความสามารถและความสนใจในการทำงานที่เกี่ยวข้องกับการพัฒนาซอฟต์แวร์และการเขียนโค้ดเป็นอย่างมาก</td>
+                            <td style="text-align: center;"><span class="score s-5">5</span></td>
+                            <td class="reason">คำตอบถูกต้อง ครบถ้วน และครอบคลุมทั้งความสนใจและทักษะของนักศึกษา โดยระบุสายงานด้านการพัฒนาซอฟต์แวร์และการเขียนโค้ดเป็นหลัก สอดคล้องกับอาชีพเป้าหมายที่คาดหวัง</td>
+                        </tr>
+        </tbody></table></div></div></body></html>

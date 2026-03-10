@@ -19,10 +19,16 @@ langchain-google-genai
 google-generativeai
 sentence-transformers
 chromadb
+litellm
+langchain-huggingface
 
 # --- PDF & Image Processing ---
 pymupdf
 camelot-py
-opencv-python
+opencv-python-headless
 Pillow
 docling
+easyocr
+
+# --- NLP & Text Processing (Thai) ---
+pythainlp

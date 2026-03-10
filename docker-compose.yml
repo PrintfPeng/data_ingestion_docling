@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  ai_backend:
+    build: .
+    container_name: ai_rag_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env  # ดึง API Key จากไฟล์ .env เครื่องมึงเข้าไปในกล่อง
+    volumes:
+      # เจาะรูเชื่อมโฟลเดอร์ในกล่อง กับเครื่องมึง ข้อมูลจะได้ไม่หาย!
+      - ./chroma_db:/app/chroma_db
+      - ./ingested:/app/ingested
+      - ./uploads:/app/uploads
+      - ./backend/logs:/app/backend/logs
+    restart: unless-stopped

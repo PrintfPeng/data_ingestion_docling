@@ -51,6 +51,10 @@ def pdf_page_to_image_bytes(page: fitz.Page, dpi: int = 300) -> bytes:
 def _clean_text(text: str) -> str:
     if not text: return ""
     text = "".join(ch for ch in text if ch == "\n" or ch.isprintable())
+    
+    # 🚀 [CRITICAL FIX 1] สมานแผลสเปซบาร์ภาษาไทยตั้งแต่ด่านแรกสุดของ OCR!
+    text = re.sub(r'(?<=[\u0E00-\u0E7F])\s+(?=[\u0E00-\u0E7F])', '', text)
+    
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -63,28 +67,24 @@ def _has_meaningful_text(text: str) -> bool:
 
 def _preprocess_image_cv2(image_bytes: bytes, debug_name: str = None) -> bytes:
     """
-    เตรียมภาพสำหรับ Tesseract: Grayscale -> Denoise -> Thresholding (Otsu's)
+    เตรียมภาพสำหรับ Tesseract: ทำแค่ Grayscale พอ! (ห้ามทำ Blur เพราะสระไทยจะหาย)
     """
     if not image_bytes: return b""
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img is None: return image_bytes
 
-    # 1. Grayscale
+    # 1. แปลงเป็นขาวดำ (Grayscale) อย่างเดียว ให้ตัวอักษรยังคมชัด
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # 2. Denoise
-    gray = cv2.medianBlur(gray, 3)
-
-    # 3. Thresholding (Otsu)
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # [ลบทิ้ง] ไม่ใช้ medianBlur และ Otsu แล้ว ปล่อยให้ Tesseract จัดการแสงเงาเอง
     
-    # [NEW] Save Debug Image ถ้าต้องการ
+    # [NEW] Save Debug Image
     if debug_name:
-        cv2.imwrite(debug_name, binary)
+        cv2.imwrite(debug_name, gray)
         print(f"   [DEBUG] Saved processed image to: {debug_name}")
 
-    _, encoded_img = cv2.imencode('.png', binary)
+    _, encoded_img = cv2.imencode('.png', gray)
     return encoded_img.tobytes()
 
 def _send_to_ocr_api(image_bytes: bytes) -> str:
@@ -97,8 +97,8 @@ def _send_to_ocr_api(image_bytes: bytes) -> str:
         files = {'file': ('page.png', image_bytes, 'image/png')}
         data = {
             "ocr_engine": "tesseract", 
-            "lang": "tha+eng", # ลองใช้ tha (3-letter code) เผื่อ API รองรับ
-            "options": "--psm 6" # ลองเพิ่ม PSM 6 (Assume single block) ถ้า API รองรับ
+            "lang": "tha+eng", 
+            "options": "--psm 3" # [แก้เป็น 3] Fully automatic page segmentation ให้มันแยกตารางกับข้อความเอง!
         }
 
         response = requests.post(url, headers=headers, files=files, data=data, verify=VERIFY_SSL, timeout=45)

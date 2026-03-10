@@ -46,6 +46,9 @@ def _normalize_text(s: str) -> str:
     s = ZERO_WIDTH_RE.sub("", s)
     s = NBSP_RE.sub(" ", s)
 
+    # 🚀 [CRITICAL FIX 3] ทำความสะอาดภาษาไทยในเซลล์ตาราง (Cell) และ Text Block ทุกตัว
+    s = re.sub(r'(?<=[\u0E00-\u0E7F])\s+(?=[\u0E00-\u0E7F])', '', s)
+
     # แทน whitespace ภายในบรรทัดด้วย space เดียว
     # (ไม่ยุ่งกับ newline)
     s = INLINE_WS_RE.sub(" ", s)

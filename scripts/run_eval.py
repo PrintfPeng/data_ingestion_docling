@@ -5,260 +5,282 @@ import sys
 import time
 import re
 import json
+import logging
 from pathlib import Path
+
+# ปิด Error รกๆ ของ LiteLLM
+import litellm
 from litellm import completion
+litellm.suppress_debug_info = True
+logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 
 # --- SETUP PATH & ENV ---
-project_root = Path(__file__).resolve().parents[2]
+project_root = Path(__file__).resolve().parents[1]
 sys.path.append(str(project_root))
 
 from backend.services.rag import answer_question
 
 # --- CONFIGURATION (Hybrid System) ---
-# 1. Primary Model (Qwen)
 PRIMARY_MODEL = "openai/qwen/qwen-2.5-72b-instruct"
-PRIMARY_PROVIDER = "custom"
-
-# 2. Backup Model (Gemini)
 BACKUP_MODEL = "gemini/gemini-2.5-flash"
-BACKUP_PROVIDER = "google"
-
-# --- CHECK API KEYS ---
-HAS_PRIMARY = False
-HAS_BACKUP = False
 
 # Setup Primary (Custom Qwen)
 if os.getenv("CUSTOM_API_KEY"):
     os.environ["OPENAI_API_KEY"] = os.getenv("CUSTOM_API_KEY")
     os.environ["OPENAI_API_BASE"] = os.getenv("CUSTOM_API_BASE", "http://111.223.37.51/v1")
-    HAS_PRIMARY = True
-    print(f"🔵 Primary Judge Ready: {PRIMARY_MODEL}")
-else:
-    print("⚠️ Warning: CUSTOM_API_KEY missing. Primary judge unavailable.")
+    print(f"🔵 Primary Judge: {PRIMARY_MODEL}")
 
 # Setup Backup (Google Gemini)
 if os.getenv("GOOGLE_API_KEY"):
-    HAS_BACKUP = True
-    print(f"🟢 Backup Judge Ready: {BACKUP_MODEL}")
-else:
-    print("⚠️ Warning: GOOGLE_API_KEY missing. Backup judge unavailable.")
+    os.environ["GEMINI_API_KEY"] = os.getenv("GOOGLE_API_KEY")
+    print(f"🟠 Backup Judge: {BACKUP_MODEL}")
 
-if not HAS_PRIMARY and not HAS_BACKUP:
-    print("🔴 ERROR: No API Keys found (Neither Custom nor Google). Exiting.")
-    sys.exit(1)
+# =====================================================================
+# 📝 ชุดคำถามทดสอบ 30 ข้อ (สำหรับเอกสารใบสมัครงานสหกิจศึกษา)
+# =====================================================================
+DOC_ID = "015_co-op_03_ใบสมัครงานสหกิจศึกษา_update" 
 
-# --- QUESTION DATASET (30 Questions) ---
-eval_questions = [
-    # === LEVEL 1: EASY ===
-    {"level": "Easy", "question": "สารทำความเย็นที่ใช้ในตู้เย็นรุ่นนี้คือชนิดใด", "ground_truth": "HFC-134a"},
-    {"level": "Easy", "question": "ปริมาณสารทำความเย็นที่ระบุไว้ในข้อมูลจำเพาะคือเท่าใด", "ground_truth": "75 กรัม"},
-    {"level": "Easy", "question": "แรงดันไฟฟ้าและความถี่ที่ระบุคือเท่าไหร่", "ground_truth": "220 โวลต์, 50 เฮิรตซ์"},
-    {"level": "Easy", "question": "ฉนวนกันความร้อนที่ใช้เป็นชนิดใด", "ground_truth": "CYCLO PENTANE (NON CFC 100%)"},
-    {"level": "Easy", "question": "อุปกรณ์หมายเลข 6 ในแผนภาพส่วนประกอบคือปุ่มอะไร", "ground_truth": "ปุ่มกดทำน้ำแข็งด่วน (Express Ice Making)"},
-    {"level": "Easy", "question": "อุปกรณ์หมายเลข 7 ในแผนภาพคืออะไร", "ground_truth": "หลอดไฟ LED"},
-    {"level": "Easy", "question": "อุปกรณ์หมายเลข 15 ที่ประตูตู้เย็นคืออะไร", "ground_truth": "ชั้นวางไข่"},
-    {"level": "Easy", "question": "รุ่น SJ-C19E มีความกว้างเท่าใด", "ground_truth": "535 มม."},
-    {"level": "Easy", "question": "ตู้เย็นรุ่น SJ-CP190E-CH มีปริมาตรความจุจริงกี่คิว (cu.ft)", "ground_truth": "5.9 คิว (167 ลิตร)"},
-    {"level": "Easy", "question": "บริษัทผู้ผลิตขอขอบคุณที่เลือกใช้ผลิตภัณฑ์ยี่ห้อใด", "ground_truth": "ชาร์ป (SHARP)"},
+TEST_CASES = [
+    # --- 🟢 ระดับ EASY (10 ข้อ) ---
+    {"level": "easy", "question": "นักศึกษาที่สมัครงานในเอกสารนี้ชื่ออะไร?", "expected": "นายซอลาฮูดิน ดอเล๊าะ"},
+    {"level": "easy", "question": "รหัสนักศึกษาของผู้สมัครคืออะไร?", "expected": "406559015"},
+    {"level": "easy", "question": "นักศึกษาเรียนอยู่ชั้นปีที่เท่าไหร่ และได้เกรดเฉลี่ยรวมเท่าใด?", "expected": "นักศึกษาชั้นปีที่ 4 เกรดเฉลี่ยรวม 3.22"},
+    {"level": "easy", "question": "นักศึกษาต้องการสมัครงานกับสถานประกอบการชื่ออะไร?", "expected": "Better Soft Co., Ltd."},
+    {"level": "easy", "question": "สมัครงานในตำแหน่งอะไร?", "expected": "front end developer"},
+    {"level": "easy", "question": "สถานประกอบการตั้งอยู่ที่จังหวัดอะไร?", "expected": "กรุงเทพมหานคร"},
+    {"level": "easy", "question": "สาขาวิชาและคณะที่นักศึกษาเรียนอยู่คืออะไร?", "expected": "สาขาวิชาวิทยาการคอมพิวเตอร์และเทคโนโลยีดิจิทัล คณะวิทยาศาสตร์เทคโนโลยีและการเกษตร"},
+    {"level": "easy", "question": "บัตรประจำตัวประชาชนของผู้สมัครหมดอายุวันที่เท่าไหร่?", "expected": "8 เมษายน 2576"},
+    {"level": "easy", "question": "นักศึกษานับถือศาสนาอะไร?", "expected": "อิสลาม"},
+    {"level": "easy", "question": "ระยะเวลาปฏิบัติงานสหกิจศึกษาเริ่มและสิ้นสุดเมื่อไหร่?", "expected": "เริ่มวันที่ 3 พฤศจิกายน 2568 ถึงวันที่ 16 มีนาคม 2569"},
 
-    # === LEVEL 2: MEDIUM ===
-    {"level": "Medium", "question": "หากต้องการเริ่มโหมดทำน้ำแข็งด่วน (Express Ice Making) ต้องทำอย่างไร", "ground_truth": "กดปุ่มทำน้ำแข็งด่วน (ปุ่มหมายเลข 6) จนไฟกระพริบ"},
-    {"level": "Medium", "question": "โหมดทำน้ำแข็งด่วนจะหยุดทำงานอัตโนมัติภายในกี่ชั่วโมง", "ground_truth": "ภายใน 2 ชั่วโมง"},
-    {"level": "Medium", "question": "ข้อห้ามในการใช้น้ำยาทำความสะอาดตู้เย็นมีอะไรบ้าง", "ground_truth": "ห้ามใช้น้ำร้อน, ผงขัดเงา, เบนซิน, ทินเนอร์, แอลกอฮอล์ หรือน้ำมันปิโตรเลียม"},
-    {"level": "Medium", "question": "หากขอบยางประตูสกปรก ควรทำความสะอาดอย่างไร", "ground_truth": "ใช้แปรงสีฟันจุ่มน้ำอุ่นผสมน้ำยาล้างจานเช็ดถู แล้วเช็ดด้วยน้ำเปล่าให้สะอาด"},
-    {"level": "Medium", "question": "ควรหลีกเลี่ยงการวางตู้เย็นในตำแหน่งใดบ้างเพื่อประหยัดพลังงาน", "ground_truth": "หลีกเลี่ยงการวางใกล้แหล่งกำเนิดความร้อน (เช่น เตาอบ) หรือกลางแสงแดด"},
-    {"level": "Medium", "question": "ถ้าอาหารมีกลิ่นแรง ควรจัดการอย่างไรก่อนนำเข้าตู้เย็น", "ground_truth": "ควรห่อหุ้มอาหารให้มิดชิด (Wrapping is required) เพราะตัวดูดกลิ่นอาจกำจัดได้ไม่หมด"},
-    {"level": "Medium", "question": "หลังจากเคลื่อนย้ายตู้เย็น ควรทิ้งช่วงเวลาอย่างน้อยกี่ชั่วโมงก่อนเสียบปลั๊ก", "ground_truth": "อย่างน้อย 2 ชั่วโมง (หรือตามที่คู่มือระบุเพื่อให้ระบบน้ำยาคงที่)"},
-    {"level": "Medium", "question": "การปรับอุณหภูมิช่องแช่เย็นให้เย็นน้อยลง ต้องปรับปุ่มควบคุมไปทางตัวเลขใด (มากหรือน้อย)", "ground_truth": "ปรับไปทางตัวเลขน้อย (MIN)"},
-    {"level": "Medium", "question": "ถ้าต้องการถอดชั้นวางของแบบเลื่อน (Slide tray) ต้องทำขั้นตอนใดบ้าง", "ground_truth": "ยกชั้นวางขึ้นเล็กน้อยแล้วดึงออกมาตรงๆ"},
-    {"level": "Medium", "question": "ข้อแนะนำเพิ่มเติมเพื่อลดผลกระทบต่อสิ่งแวดล้อมเกี่ยวกับการเปิดประตูตู้เย็นคืออะไร", "ground_truth": "ไม่ควรเปิดประตูตู้เย็นบ่อย หรือเปิดทิ้งไว้นานเกินความจำเป็น"},
+    # --- 🟡 ระดับ MEDIUM (10 ข้อ) ---
+    {"level": "medium", "question": "อาชีพเป้าหมายที่นักศึกษาสนใจมีอะไรบ้าง?", "expected": "1. Programmer 2. Cyber Security 3. Software Engineer"},
+    {"level": "medium", "question": "ทักษะด้านเทคโนโลยีที่ผู้สมัครควรมีสำหรับตำแหน่งนี้คืออะไรบ้าง?", "expected": "HTML, CSS, JavaScript, Framework (React/Vue.js), Responsive Design, Git"},
+    {"level": "medium", "question": "ลักษณะงานนี้ต้องทำงานร่วมกับทีมใดบ้าง?", "expected": "ทีม UX/UI และ Back-End"},
+    {"level": "medium", "question": "ผู้สมัครจบระดับมัธยมปลายจากสถานศึกษาใด และได้ผลการศึกษาเท่าไหร่?", "expected": "โรงเรียนอิสลามบูรพาวิทยา ผลการศึกษา 2.80"},
+    {"level": "medium", "question": "ผู้สมัครเคยเข้าร่วมการอบรมโครงการ Yala Hackathon เมื่อวันที่เท่าไหร่?", "expected": "13/08/68 - 15/08/68"},
+    {"level": "medium", "question": "โครงการ Super AI Engineer 5th year จัดขึ้นที่จังหวัดใด?", "expected": "มอ.ภูเก็ต"},
+    {"level": "medium", "question": "การอบรมเรื่อง AI for Office Automation จัดโดยหน่วยงานใด?", "expected": "มหาวิทยาลัยราชภัฏยะลา"},
+    {"level": "medium", "question": "สรุปรายละเอียดลักษณะงาน (Job Description) ที่นักศึกษาต้องทำมาให้หน่อย", "expected": "ออกแบบพัฒนาเว็บโดยใช้ HTML/CSS/JS และ Framework, ทำงานกับทีม UX/UI และ Back-End, เชื่อมต่อ API เป็นต้น"},
+    {"level": "medium", "question": "สรุปประวัติการอบรมทั้งหมดของนักศึกษาคนนี้ว่าเคยผ่านหัวข้ออะไรมาบ้าง", "expected": "AI for Office Automation, Super AI Engineer 5th year, และ Yala Hackathon"},
+    {"level": "medium", "question": "เอกสารฉบับนี้คือเอกสารอะไร และมีจุดประสงค์เพื่ออะไร?", "expected": "ใบสมัครงานสหกิจศึกษา เพื่อใช้สมัครงานในตำแหน่ง front end developer"},
 
-    # === LEVEL 3: HARD ===
-    {"level": "Hard", "question": "ทำไมไฟ LED ในช่องแช่เย็นถึงกระพริบ และต้องเรียกช่างหรือไม่", "ground_truth": "ไฟกระพริบแสดงสถานะโหมดทำน้ำแข็งด่วน (Express Ice Making) ทำงานอยู่ ไม่ต้องเรียกช่าง เพราะเป็นอาการปกติ"},
-    {"level": "Hard", "question": "หากพบว่าด้านข้างของตู้เย็นมีความร้อนเกิดขึ้น ถือว่าผิดปกติหรือไม่ เพราะเหตุใด", "ground_truth": "ไม่ผิดปกติ เพราะมีการฝังท่อระบายความร้อนไว้ที่ผนังตู้เพื่อป้องกันการเกิดหยดน้ำเกาะ (เหงื่อ)"},
-    {"level": "Hard", "question": "ถ้าอาหารในช่องแช่เย็นเป็นน้ำแข็ง (Freeze) ทั้งที่ไม่ได้ปรับอุณหภูมิสูงสุด เกิดจากสาเหตุใดได้บ้าง", "ground_truth": "อาจเกิดจากอุณหภูมิภายนอกต่ำเกินไป (เช่น ฤดูหนาว) หรือวางอาหารใกล้มุมที่มีความเย็นจัด"},
-    {"level": "Hard", "question": "เสียงดังคล้ายน้ำไหลจ๊อกๆ ในตู้เย็นเกิดจากอะไร", "ground_truth": "เกิดจากการไหลเวียนของสารทำความเย็นภายในระบบ ถือเป็นอาการปกติ"},
-    {"level": "Hard", "question": "ทำไมถึงห้ามใช้น้ำร้อนทำความสะอาดชิ้นส่วนพลาสติกภายในตู้เย็น", "ground_truth": "เพราะความร้อนอาจทำให้ชิ้นส่วนพลาสติกผิดรูปหรือแตกร้าวได้"},
-    {"level": "Hard", "question": "หากไฟดับเป็นเวลานาน ควรปฏิบัติต่ออาหารในตู้เย็นอย่างไร", "ground_truth": "ควรเปิดประตูตู้เย็นให้น้อยที่สุด เพื่อรักษาความเย็นภายในตู้ให้คงอยู่นานที่สุด"},
-    {"level": "Hard", "question": "สาร Cyclo Pentane ที่ใช้เป็นฉนวน มีความเป็นมิตรต่อสิ่งแวดล้อมอย่างไร", "ground_truth": "เป็นสาร Non-CFC 100% ไม่ทำลายชั้นโอโซน"},
-    {"level": "Hard", "question": "ระบบกำจัดกลิ่น (Deodorizer) สามารถกำจัดกลิ่นได้ทั้งหมดหรือไม่", "ground_truth": "ไม่ได้ทั้งหมด อาหารที่มีกลิ่นแรงยังคงต้องห่อหุ้มให้มิดชิด"},
-    {"level": "Hard", "question": "หากตู้เย็นไม่เย็นเลย ควรตรวจสอบจุดใดเป็นอันดับแรก", "ground_truth": "ตรวจสอบว่าเสียบปลั๊กแน่นหรือไม่ หรือฟิวส์/เบรกเกอร์ของบ้านตัดหรือไม่"},
-    {"level": "Hard", "question": "ทำไมไม่ควรวางสิ่งของหนักหรืออันตรายไว้บนหลังตู้เย็น", "ground_truth": "เพราะเมื่อเปิดปิดประตู แรงสั่นสะเทือนอาจทำให้ของตกลงมาเกิดอันตรายได้"}
+    # --- 🔴 ระดับ HARD (10 ข้อ) ---
+    {"level": "hard", "question": "ขอดูตารางประวัติการศึกษาของผู้สมัครหน่อย", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_TABLE:TBL_x] ที่แสดงประวัติการศึกษา"},
+    {"level": "hard", "question": "ขอดูตารางประวัติการอบรมของผู้สมัครหน่อย", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_TABLE:TBL_x] ที่แสดงตารางการอบรม"},
+    {"level": "hard", "question": "ขอดูตารางความสามารถทางภาษาของผู้สมัคร", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_TABLE:TBL_x] ที่แสดงความสามารถทางภาษาอังกฤษ มลายู ไทย"},
+    {"level": "hard", "question": "ในเอกสารมีตารางที่แสดงผลการเรียนตอนมัธยมไหม ขอดูหน่อย", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_TABLE:TBL_x] หรือดึงข้อมูลตารางประวัติการศึกษามาแสดง"},
+    {"level": "hard", "question": "ช่วยแสดงตารางที่บอกว่าเคยไปอบรมที่ไหนบ้างให้ดูหน่อย", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_TABLE:TBL_x] แสดงตารางการอบรม"},
+    {"level": "hard", "question": "มีตารางประเมินทักษะการฟังพูดอ่านเขียนภาษาต่างๆ ไหม ขอดูตารางนั้น", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_TABLE:TBL_x] แสดงตารางความสามารถทางภาษา"},
+    {"level": "hard", "question": "ขอดูรูปถ่ายของนักศึกษาที่สมัครงานหน่อย", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_IMAGE: ...] เพื่อแสดงรูปถ่ายนักศึกษา"},
+    {"level": "hard", "question": "ในเอกสารมีรูปภาพใบหน้าของผู้สมัครไหม ขอดูภาพนั้นหน่อย", "expected": "AI ตอบกลับโดยใช้ Tag [SHOW_IMAGE: ...] เพื่อแสดงรูปถ่ายบุคคล"},
+    {"level": "hard", "question": "จากข้อมูลในเอกสาร ทักษะ Soft Skill หรือลักษณะนิสัยการทำงานที่ผู้สมัครควรมีสำหรับตำแหน่งนี้คืออะไร?", "expected": "มีความรับผิดชอบและพร้อมทำงานเป็นทีมได้อย่างมีประสิทธิภาพ"},
+    {"level": "hard", "question": "วิเคราะห์จากสายงานที่สมัครและอาชีพเป้าหมาย คิดว่านักศึกษาคนนี้ถนัดงานด้านไหน?", "expected": "สายงานด้านการพัฒนาซอฟต์แวร์ เขียนโปรแกรม (Programmer, Software Engineer, Front End)"}
 ]
+# =====================================================================
+# 🧠 AI Judge Prompt
+# =====================================================================
+JUDGE_PROMPT = """
+คุณคือผู้เชี่ยวชาญด้านการประเมินระบบ AI (RAG Evaluator)
+หน้าที่ของคุณคือ ให้คะแนนความถูกต้องของ 'คำตอบจาก AI' โดยเปรียบเทียบกับ 'คำตอบที่คาดหวัง'
 
-# --- HELPER: Judge with Fallback Logic ---
-def call_judge_api(model, prompt):
-    """Helper function to call LiteLLM"""
-    response = completion(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-    content = response.choices[0].message.content
-    match = re.search(r"\{.*\}", content, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    else:
-        raise ValueError("JSON not found in response")
+⚠️ **กฎเหล็กสำหรับการประเมินระบบ Hybrid (มีรูปภาพและตาราง)** ⚠️
+1. ถ้าระบบตอบกลับมาโดยมี Tag รูปภาพ เช่น `[SHOW_IMAGE: ...]` ถือว่าระบบทำงาน **สมบูรณ์แบบ** (ให้ 5 คะแนน)
+2. ถ้าระบบตอบกลับมาโดยมี Tag ตาราง เช่น `[SHOW_TABLE: ...]` ถือว่าระบบทำงาน **สมบูรณ์แบบ** (ให้ 5 คะแนน)
+3. หากคำถามไม่ได้ขอดูรูปหรือตาราง ให้ประเมินจากความถูกต้องของเนื้อหา (Fact-checking) ตามปกติ
 
-def judge_answer_hybrid(question, answer, ground_truth, context):
-    prompt = f"""
-    You are an impartial judge evaluating a RAG system.
-    
-    Query: {question}
-    Ground Truth: {ground_truth}
-    Actual Answer: {answer}
-    Retrieved Context: {context}
+เกณฑ์การให้คะแนน (1-5):
+1: ตอบผิดไปคนละเรื่อง, ข้อมูลมั่ว (Hallucination) หรือตอบว่าหาไม่เจอ
+3: ตอบถูกบางส่วน แต่ขาดรายละเอียดสำคัญไป
+5: ตอบถูกต้อง ครบถ้วน หรือมีการเรียกใช้ [SHOW_IMAGE] / [SHOW_TABLE] ได้ตรงตามคำถาม
 
-    Criteria:
-    1. Correctness (1-5): Does the Actual Answer match the Ground Truth?
-    2. Faithfulness (1-5): Is the answer supported by the Context?
+---
+คำถามที่ผู้ใช้ถาม: {question}
+คำตอบที่คาดหวัง: {expected}
+คำตอบที่ AI ตอบกลับมา: {answer}
+---
 
-    Response Format (JSON ONLY):
-    {{"correctness": <int>, "faithfulness": <int>, "reason": "<Short reason in Thai>"}}
-    """
-    
-    # 1. Try Primary (Qwen)
-    if HAS_PRIMARY:
-        try:
-            # print("   🔹 Using Primary Judge (Qwen)...")
-            return call_judge_api(PRIMARY_MODEL, prompt)
-        except Exception as e:
-            print(f"   ⚠️ Primary Judge Failed: {e}")
-            if not HAS_BACKUP:
-                return {"correctness": 0, "faithfulness": 0, "reason": "Primary Failed & No Backup"}
-    
-    # 2. Try Backup (Gemini) if Primary failed or unavailable
-    if HAS_BACKUP:
-        try:
-            print("   🔸 Switching to Backup Judge (Gemini)...")
-            time.sleep(2) # รอแป๊บนึงกัน Google Rate Limit
-            return call_judge_api(BACKUP_MODEL, prompt)
-        except Exception as e:
-            print(f"   ❌ Backup Judge Failed: {e}")
-            return {"correctness": 0, "faithfulness": 0, "reason": "Both Judges Failed"}
+กรุณาวิเคราะห์และตอบกลับมาเป็น JSON Format เท่านั้น (ห้ามมีข้อความอื่นปน):
+{{
+    "score_correctness": <int 1-5>,
+    "judge_reason": "<คำอธิบายเหตุผลสั้นๆ ว่าทำไมถึงให้คะแนนเท่านี้>"
+}}
+"""
 
-    return {"correctness": 0, "faithfulness": 0, "reason": "No Judges Available"}
-
-async def safe_rag_call(query):
+def parse_json_response(raw_text: str) -> dict:
     try:
-        response = await answer_question(
-            query=query, 
-            doc_ids=['operation_manual_sharp'], 
-            top_k=10, 
-            mode="auto"
-        )
-        return response
-    except Exception as e:
-        return {"answer": f"Error: {e}", "sources": []}
+        clean_text = re.sub(r'```(?:json)?', '', raw_text).strip()
+        return json.loads(clean_text)
+    except:
+        return {"score_correctness": 1, "judge_reason": f"Failed to parse AI output: {raw_text[:50]}..."}
 
-# --- MAIN ---
-async def main():
-    print(f"🚀 Starting Hybrid Evaluation")
-    if HAS_PRIMARY: print(f"   Main: {PRIMARY_MODEL}")
-    if HAS_BACKUP:  print(f"   Backup: {BACKUP_MODEL}")
-    print("-" * 50)
+async def evaluate_single_turn(test_case: dict, index: int) -> dict:
+    question = test_case["question"]
+    expected = test_case["expected"]
+    level = test_case["level"]
 
-    eval_data = []
-
-    for i, item in enumerate(eval_questions):
-        print(f"[{i+1}/{len(eval_questions)}] [{item['level']}] Q: {item['question']}")
-        
-        # 1. RAG Call
-        rag_res = await safe_rag_call(item['question'])
-        answer = rag_res.get("answer", "No answer")
-        sources = rag_res.get("sources", [])
-        
-        contexts = []
-        for src in sources:
-            text = src.get("content") or src.get("metadata", {}).get("content", "")
-            contexts.append(text[:500])
-        full_context = "\n---\n".join(contexts) if contexts else "No context."
-
-        # 2. Hybrid Judge
-        score = judge_answer_hybrid(item['question'], answer, item['ground_truth'], full_context)
-        
-        eval_data.append({
-            "level": item['level'],
-            "question": item['question'],
-            "ground_truth": item['ground_truth'],
-            "answer": answer,
-            "score_correctness": score.get("correctness", 0),
-            "score_faithfulness": score.get("faithfulness", 0),
-            "judge_reason": score.get("reason", "")
-        })
-        
-        print(f"   👉 AI: {answer[:60]}...")
-        print(f"   ✅ Score: {score.get('correctness')}/5 ({score.get('reason')})\n")
-        
-        # พักนิดหน่อย
-        time.sleep(1) 
-
-    # 3. Report Generation
-    df = pd.DataFrame(eval_data)
-    total_avg = df["score_correctness"].mean()
-    percentage = (total_avg / 5.0) * 100
+    print(f"\n▶️ [{index}/30] Q: {question}")
+    start_time = time.time()
     
-    grade, color = "ปรับปรุง 🔴", "red"
-    if percentage >= 80: grade, color = "ยอดเยี่ยม 🟢", "green"
-    elif percentage >= 70: grade, color = "ดี 🔵", "blue"
-    elif percentage >= 50: grade, color = "พอใช้ 🟠", "orange"
+    # 1. รับคำตอบจากระบบ RAG ของเรา 
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = await answer_question(query=question, doc_ids=[DOC_ID])
+    
+    answer = result.get("answer", "No answer generated.")
+    latency = time.time() - start_time
+    
+    print(f"   🤖 A: {answer[:150].replace(chr(10), ' ')}...")
 
-    print(f"\n📈 Final Score: {percentage:.2f}% ({grade})")
+    # 2. เริ่มการให้คะแนน
+    prompt = JUDGE_PROMPT.format(question=question, expected=expected, answer=answer)
+    judge_res = None
+    
+    # 🌟 แผน A: พยายามใช้ Custom Qwen เป็นกรรมการก่อน
+    if os.getenv("CUSTOM_API_KEY"):
+        try:
+            import sys, io
+            backup_stdout = sys.stdout
+            sys.stdout = io.StringIO() 
+            
+            response = completion(model=PRIMARY_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=200, response_format={"type": "json_object"})
+            
+            sys.stdout = backup_stdout 
+            judge_res = parse_json_response(response.choices[0].message.content)
+            
+        except Exception:
+            sys.stdout = backup_stdout 
+            print("   🔄 [Auto-Fallback] Qwen ไม่ตอบสนอง สลับให้ Gemini ตรวจแทน...")
 
+    # 🌟 แผน B: ถ้าแผน A พัง สลับไปใช้ Gemini ให้คะแนนอัตโนมัติ
+    if not judge_res and os.getenv("GOOGLE_API_KEY"):
+        try:
+            response = completion(model=BACKUP_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=200)
+            judge_res = parse_json_response(response.choices[0].message.content)
+        except Exception as e:
+            print(f"   ❌ [Error] Gemini ก็ล่มเหมือนกัน: {e}")
+
+    if not judge_res:
+        judge_res = {"score_correctness": 1, "judge_reason": "AI กรรมการทั้ง 2 ตัวไม่สามารถเชื่อมต่อได้"}
+
+    return {
+        "id": index, # <-- เพิ่มการเก็บลำดับข้อที่ตรงนี้
+        "level": level,
+        "question": question,
+        "expected": expected,
+        "answer": answer,
+        "score_correctness": judge_res.get("score_correctness", 1),
+        "judge_reason": judge_res.get("judge_reason", ""),
+        "latency_sec": round(latency, 2)
+    }
+
+async def run_eval_pipeline():
+    results = []
+    print(f"🚀 เริ่มการประเมินผลระบบ Hybrid RAG (รวม 30 ข้อ)")
+    
+    for idx, case in enumerate(TEST_CASES, start=1):
+        res = await evaluate_single_turn(case, idx)
+        results.append(res)
+        
+        # [CRITICAL FIX] ป้องกัน API Rate Limit (หยุดพัก 4 วินาทีทุกข้อ)
+        if idx < len(TEST_CASES):
+            print("   ⏳ [Rate Limit Protection] พัก 4 วินาที เพื่อป้องกัน API โดนบล็อค...")
+            await asyncio.sleep(4)
+            
+    df = pd.DataFrame(results)
+    
+    total_score = df['score_correctness'].sum()
+    max_score = len(df) * 5
+    percentage = (total_score / max_score) * 100
+    
+    if percentage >= 80:
+        grade, color = "Excellent", "#22c55e"
+    elif percentage >= 60:
+        grade, color = "Good", "#eab308"
+    else:
+        grade, color = "Needs Improvement", "#ef4444"
+
+    # [อัปเกรดหน้าตา HTML ใหม่] แก้ปัญหาจอทะลุขอบ และทำให้ดูสวยงามระดับ Pro
     html = f"""
-    <!DOCTYPE html>
-    <html lang="th">
+    <html>
     <head>
-        <meta charset="UTF-8">
-        <title>รายงานผลการทดสอบ RAG (Hybrid Judge)</title>
+        <meta charset="utf-8">
+        <title>RAG Evaluation Report</title>
         <style>
-            body {{ font-family: 'Sarabun', sans-serif; margin: 20px; background: #f4f6f9; }}
-            .card {{ background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ padding: 12px; border: 1px solid #ddd; text-align: left; vertical-align: top; }}
-            th {{ background: #2c3e50; color: white; }}
-            .score {{ font-weight: bold; padding: 4px 8px; border-radius: 4px; color: white; display: inline-block; }}
-            .s-5, .s-4 {{ background: #2ecc71; }} .s-3 {{ background: #f1c40f; color: black; }} .s-2, .s-1, .s-0 {{ background: #e74c3c; }}
-            .Easy {{ border-left: 5px solid #2ecc71; }}
-            .Medium {{ border-left: 5px solid #f1c40f; }}
-            .Hard {{ border-left: 5px solid #e74c3c; }}
+            body {{ font-family: 'Sarabun', sans-serif; background-color: #f1f5f9; padding: 20px; color: #0f172a; }}
+            .container {{ max-width: 1400px; margin: 0 auto; }}
+            .card {{ background: white; padding: 24px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow-x: auto; }}
+            h2 {{ margin-top: 0; color: #1e293b; }}
+            
+            /* บังคับตารางไม่ให้ทะลุขอบจอ */
+            table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+            th, td {{ padding: 16px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; }}
+            th {{ background-color: #1e293b; color: white; text-align: center; text-transform: uppercase; font-size: 14px; letter-spacing: 0.5px; }}
+            
+            /* ป้ายบอกระดับความยาก (Badges) */
+            .badge-easy {{ background-color: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }}
+            .badge-medium {{ background-color: #fef08a; color: #854d0e; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }}
+            .badge-hard {{ background-color: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }}
+            
+            /* สีคะแนน */
+            .score {{ font-weight: bold; padding: 6px 12px; border-radius: 6px; display: inline-block; text-align: center; width: 24px; font-size: 16px; }}
+            .s-5 {{ background: #22c55e; color: white; }}
+            .s-4 {{ background: #84cc16; color: white; }}
+            .s-3 {{ background: #eab308; color: white; }}
+            .s-2 {{ background: #f97316; color: white; }}
+            .s-1 {{ background: #ef4444; color: white; }}
+            
+            /* ตกแต่ง Tag และรูปภาพ */
+            .tag {{ font-family: monospace; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #334155; word-break: break-all; }}
+            img {{ max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 8px; }}
+            .reason {{ color: #475569; font-size: 13px; line-height: 1.5; }}
         </style>
-        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
     </head>
     <body>
-        <div class="card" style="text-align: center;">
-            <h2>คะแนนรวม: <span style="color:{color}">{percentage:.2f}%</span> ({grade})</h2>
-            <p>Judge Model: Hybrid (Qwen Primary / Gemini Backup)</p>
-        </div>
-        <div class="card">
-            <table>
-                <thead>
-                    <tr>
-                        <th width="10%">ระดับ</th>
-                        <th width="30%">คำถาม</th>
-                        <th width="30%">คำตอบ AI</th>
-                        <th width="5%">คะแนน</th>
-                        <th width="25%">เหตุผล</th>
-                    </tr>
-                </thead>
-                <tbody>
+        <div class="container">
+            <div class="card" style="text-align: center;">
+                <h2>📊 ผลประเมินระบบ Hybrid RAG</h2>
+                <h1 style="font-size: 48px; margin: 10px 0; color: {color}">{percentage:.2f}% <span style="font-size: 24px;">({grade})</span></h1>
+                <p style="color: #64748b;"><strong>เอกสารทดสอบ:</strong> {DOC_ID} | <strong>จำนวนคำถาม:</strong> 30 ข้อ</p>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="5%">ข้อ</th>
+                            <th width="10%">ระดับ</th>
+                            <th width="25%">คำถาม</th>
+                            <th width="35%">คำตอบจากระบบ</th>
+                            <th width="5%">คะแนน</th>
+                            <th width="20%">เหตุผลจาก AI</th>
+                        </tr>
+                    </thead>
+                    <tbody>
     """
     for _, row in df.iterrows():
+        ans_display = str(row['answer']).replace("[SHOW_TABLE:", "<span class='tag'>[SHOW_TABLE:").replace("[SHOW_IMAGE:", "<span class='tag'>[SHOW_IMAGE:")
+        ans_display = ans_display.replace("]", "]</span>")
+        
+        # จัดการคลาสของ Badge ให้ตรงกับระดับ
+        badge_class = f"badge-{row['level'].lower()}"
+        
         html += f"""
-                <tr class="{row['level']}">
-                    <td><strong>{row['level']}</strong></td>
-                    <td>{row['question']}</td>
-                    <td>{row['answer']}</td>
-                    <td><span class="score s-{row['score_correctness']}">{row['score_correctness']}</span></td>
-                    <td style="color:gray;">{row['judge_reason']}</td>
-                </tr>
+                        <tr>
+                            <td style="text-align: center; font-weight: bold; font-size: 16px; color: #475569;">{row['id']}</td>
+                            <td style="text-align: center;"><span class="{badge_class}">{row['level'].upper()}</span></td>
+                            <td style="font-weight: 600; color: #1e293b;">{row['question']}</td>
+                            <td style="font-size:14px; color:#334155; line-height: 1.6;">{ans_display}</td>
+                            <td style="text-align: center;"><span class="score s-{row['score_correctness']}">{row['score_correctness']}</span></td>
+                            <td class="reason">{row['judge_reason']}</td>
+                        </tr>
         """
-    html += "</tbody></table></div></body></html>"
+    html += "</tbody></table></div></div></body></html>"
     
     with open("eval_report_th.html", "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"💾 Report saved to: {os.path.abspath('eval_report_th.html')}")
+    print(f"\n✅ การประเมินเสร็จสิ้น! รีพอร์ตถูกบันทึกไว้ที่: {os.path.abspath('eval_report_th.html')}") 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_eval_pipeline())

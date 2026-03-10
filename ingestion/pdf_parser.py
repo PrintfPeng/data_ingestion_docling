@@ -79,6 +79,10 @@ def _clean_text(text: str) -> str:
     if not text: return ""
     # ลบ control chars แต่เก็บ newline
     text = "".join(ch for ch in text if ch == "\n" or ch.isprintable())
+    
+    # 🚀 [CRITICAL FIX 2] สมานแผลภาษาไทยก่อนถูกเอาไปวิเคราะห์หา Intent/Header!
+    text = re.sub(r'(?<=[\u0E00-\u0E7F])\s+(?=[\u0E00-\u0E7F])', '', text)
+    
     # ยุบ space เกิน
     text = re.sub(r"[ \t]+", " ", text)
     # ยุบ newline เกิน
@@ -435,8 +439,11 @@ def parse_pdf(
             try:
                 vs = get_vector_store()
                 for table in extracted_tables:
-                    # [FIX] เรียกใช้ table_to_text ที่นำเข้ามาแล้ว
                     text = table_to_text(table)
+                    
+                    # 🚀 [CRITICAL FIX] คลีนสเปซบาร์ภาษาไทยก่อนยัดลง Vector DB โดยตรง!
+                    text = re.sub(r'(?<=[\u0E00-\u0E7F])\s+(?=[\u0E00-\u0E7F])', '', text)
+                    
                     metadata_dict = {
                         "doc_id": table.doc_id,
                         "page": table.page,

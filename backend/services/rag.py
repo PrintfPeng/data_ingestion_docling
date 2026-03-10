@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # [CHANGE] เปลี่ยน Import เป็น ChatOpenAI สำหรับ Custom API
 try:
     from langchain_openai import ChatOpenAI
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
     _HAS_GENAI = True
 except Exception:
     ChatOpenAI = None  # type: ignore
@@ -352,6 +352,25 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
         if query.lower() in content:
             base_score += 3.0
             
+        # [CRITICAL FIX] หักคะแนน Keyword ให้ตรงกับ Intent
+        source_type = str(getattr(d, "metadata", {}).get("source", "text")).lower()
+        query_lower = query.lower()
+        
+        is_img_q = any(x in query_lower for x in ["รูป", "ภาพ", "image", "logo", "กราฟ", "แผนภูมิ"])
+        is_tbl_q = any(x in query_lower for x in ["ตาราง", "table", "ฟอร์ม", "แบบฟอร์ม"])
+        
+        if is_img_q:
+            if source_type != "image":
+                base_score *= 0.1  # ถามรูป แต่ได้เท็กซ์/ตาราง -> กดจมดิน
+        elif is_tbl_q:
+            if source_type != "table":
+                base_score *= 0.2  # ถามตาราง แต่ได้เท็กซ์/รูป -> กดให้ต่ำ
+        else:
+            # คำถามทั่วไป (Text) 
+            if source_type == "image":
+                base_score *= 0.1  # ถามเท็กซ์ อย่าเอารูปมาเสนอหน้า
+            elif source_type == "table":
+                base_score *= 0.5  # ถามเท็กซ์ ตารางโผล่ได้นิดหน่อย เผื่อมีประโยชน์
         # Init metadata if missing
         if "ai_score" not in d.metadata:
             d.metadata["ai_score"] = 0.0
@@ -377,6 +396,22 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
                 
                 for idx, raw in zip(valid_pairs_indices, raw_scores):
                     norm_score = normalize_score(float(raw))
+                    
+                    # [CRITICAL FIX] หักคะแนน AI Score ด้วย
+                    source_type = str(scored_docs[idx].metadata.get("source", "text")).lower()
+                    
+                    if is_img_q:
+                        if source_type != "image":
+                            norm_score *= 0.1
+                    elif is_tbl_q:
+                        if source_type != "table":
+                            norm_score *= 0.2
+                    else:
+                        if source_type == "image":
+                            norm_score *= 0.1
+                        elif source_type == "table":
+                            norm_score *= 0.5
+                        
                     scored_docs[idx].metadata["ai_score"] = norm_score
                     scored_docs[idx].metadata["raw_score"] = float(raw)
                 
@@ -484,7 +519,90 @@ def _find_best_qna_answer_from_docs(query: str, docs) -> Optional[Dict]:
             "score": float(best_score)
         }
     return None
+# -------------------------------------------------------------------
+# Memory & Conversational Logic
+# -------------------------------------------------------------------
+def _get_chat_history(limit: int = 3, current_doc_ids: Optional[List[str]] = None) -> tuple[list[dict], list[str]]:
+    """อ่านประวัติ N Turn ล่าสุด (โดยกรองเฉพาะประวัติของเอกสารที่กำลังคุยอยู่เท่านั้น)"""
+    log_path = PROJECT_ROOT / "backend" / "logs" / "qa_log.jsonl"
+    history = []
+    sticky_doc_ids = []
 
+    if not log_path.exists():
+        return history, sticky_doc_ids
+
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        # 1. หา Sticky doc_ids จากประวัติล่าสุดที่เคยคุย
+        for line in reversed(lines):
+            data = json.loads(line)
+            doc_ids = data.get("doc_ids")
+            if doc_ids and isinstance(doc_ids, list):
+                sticky_doc_ids = doc_ids
+                break
+
+        # [NEW LOGIC] เป้าหมายการดึงประวัติ: ถ้าหน้าเว็บส่ง doc_ids ใหม่มา ให้ยึดอันใหม่ แต่ถ้าไม่ส่ง ให้ยึด sticky ของเก่า
+        target_doc_ids = current_doc_ids if current_doc_ids else sticky_doc_ids
+
+        # 2. ดึงประวัติคำถาม-คำตอบ โดยกวาดจากล่างขึ้นบน แล้วกรองเอาเฉพาะเอกสารที่ตรงกัน
+        matched_turns = 0
+        for line in reversed(lines):
+            data = json.loads(line)
+            log_doc_ids = data.get("doc_ids")
+            
+            # ถ้าเอกสารใน log ไม่ตรงกับเอกสารที่กำลังคุยอยู่ ให้ "ข้าม" ประทัดนี้ไปเลย (ป้องกันความจำปนกัน)
+            if target_doc_ids and log_doc_ids != target_doc_ids:
+                continue
+
+            q = data.get("query", "")
+            a = data.get("answer", "")
+            
+            if q and a and "ไม่พบข้อมูล" not in a and "ระบบค้นหาขัดข้อง" not in a:
+                # แทรกใส่ข้างหน้า (เพราะเราอ่านย้อนหลัง)
+                history.insert(0, {"role": "assistant", "content": a})
+                history.insert(0, {"role": "user", "content": q})
+                matched_turns += 1
+
+            if matched_turns >= limit:
+                break
+
+    except Exception as e:
+        logger.error(f"[rag] Error reading chat log: {e}")
+
+    return history, sticky_doc_ids
+
+
+async def _rewrite_query(query: str, history: list[dict], llm) -> str:
+    """ให้ AI แปลงคำถามที่มีคำสรรพนาม ให้เป็นคำถามที่สมบูรณ์แบบเพื่อเอาไปค้นหา"""
+    if not history or not llm:
+        return query
+
+    # เอาประวัติมาต่อกันเป็น Text ให้ AI ด่านหน้าอ่าน
+    history_text = "\n".join([f"{item['role']}: {item['content'][:200]}" for item in history])
+
+    sys_prompt = SystemMessage(content=(
+        "คุณคือ AI ด่านหน้า มีหน้าที่ 'เรียบเรียงคำถามใหม่' (Query Rewriting)\n"
+        "กฎเหล็ก:\n"
+        "1. อ่านประวัติการคุย ถ้าคำถามใหม่มีคำสรรพนาม (เช่น เขา, มัน, ที่นั่น, เกรดเท่าไหร่) ให้เปลี่ยนเป็นชื่อคนหรือสิ่งนั้นให้สมบูรณ์\n"
+        "2. ห้ามตอบคำถามเด็ดขาด! ให้พิมพ์แค่ 'คำถามที่เรียบเรียงใหม่' ประโยคเดียวเท่านั้น\n"
+        "3. ถ้าคำถามใหม่ชัดเจนสมบูรณ์อยู่แล้ว ให้พิมพ์คำถามเดิมเป๊ะๆ กลับมา\n"
+    ))
+    
+    user_prompt = HumanMessage(content=(
+        f"=== ประวัติการคุย ===\n{history_text}\n\n"
+        f"=== คำถามใหม่ ===\n{query}\n\n"
+        f"คำถามที่เรียบเรียงใหม่คือ:"
+    ))
+
+    try:
+        res = await llm.ainvoke([sys_prompt, user_prompt])
+        rewritten = getattr(res, "content", str(res)).strip().strip("'\"")
+        return rewritten if rewritten else query
+    except Exception as e:
+        logger.warning(f"[rag] Query rewrite failed: {e}")
+        return query
 
 # -------------------------------------------------------------------
 # 5) main RAG function (UPGRADED & ROBUST)
@@ -500,6 +618,21 @@ async def answer_question(
     if not query or not query.strip():
         return {"answer": "กรุณาพิมพ์คำถามครับ", "sources": [], "intent": None, "mode": mode}
 
+    # 🧠 [MEMORY SYSTEM] โหลดความจำ 3 Turn ล่าสุด โดยส่ง doc_ids ปัจจุบันไปกรองด้วย!
+    chat_history, sticky_doc_ids = _get_chat_history(limit=3, current_doc_ids=doc_ids)
+
+    # 🎯 [STICKY DOC_IDS] ถ้าไม่ได้ส่ง doc_ids มา ให้ดึงของเก่าจากคำถามที่แล้วมาสวมรอยเลย!
+    if not doc_ids and sticky_doc_ids:
+        doc_ids = sticky_doc_ids
+        logger.info(f"[rag] Auto-injected sticky doc_ids: {doc_ids}")
+
+    # 🪄 [QUERY REWRITER] แต่งประโยคคำถามใหม่ให้สมบูรณ์
+    llm_fast = _get_llm_instance(model=_LL_MODEL_FAST)
+    search_query = query # ตั้งต้นด้วยคำถามเดิม
+    if chat_history and llm_fast:
+        search_query = await _rewrite_query(query, chat_history, llm_fast)
+        logger.info(f"[rag] Rewritten Query: '{query}' -> '{search_query}'")
+
     # [NEW] STEP 1: General Intent Guard
     if _detect_general_intent(query):
         return {
@@ -509,11 +642,13 @@ async def answer_question(
             "mode": mode
         }
 
-    # [NEW] STEP 2: Mode Selection (Deterministic)
+# [NEW] STEP 2: Mode Selection (Deterministic)
     if mode == "auto":
         q_lower = query.lower()
-        if any(x in q_lower for x in ["ตาราง", "table", "ยอด", "สถิติ", "list", "รายการ", "สรุป"]):
+        if any(x in q_lower for x in ["ตาราง", "table", "ยอด", "สถิติ", "list", "รายการ", "สรุป", "ฟอร์ม", "แบบฟอร์ม"]):
             intent = "table"
+        elif any(x in q_lower for x in ["รูป", "ภาพ", "image", "logo", "โลโก้", "กราฟ", "แผนภูมิ", "แผนภาพ"]):
+            intent = "image"
         else:
             intent = "text"
     else:
@@ -533,7 +668,7 @@ async def answer_question(
 
     try:
         # Layer 1: Strict Search
-        raw_docs = search_similar(query, k=top_k*3, doc_ids=sanitized_doc_ids, sources=sources_filter, doc_types=doc_types)
+        raw_docs = search_similar(search_query, k=top_k*3, doc_ids=sanitized_doc_ids, sources=sources_filter, doc_types=doc_types)
         
         # [CHANGE] Disabled Layer 2 & 3 to prevent cross-document contamination
         # ถ้า Layer 1 (Strict) ไม่เจอ ก็คือไม่เจอเลย (เพื่อให้ระบบตอบว่า "ไม่พบข้อมูล" แทนที่จะมั่ว)
@@ -558,14 +693,14 @@ async def answer_question(
         logger.info(f"[rag] Found {len(raw_docs)} raw docs")
 
         # Rerank
-        docs = _rerank_documents(query, raw_docs, top_k)
+        docs = _rerank_documents(search_query, raw_docs, top_k)
         
         # [NEW] STEP 4: STRICT FILTERING (No Rescue Mission)
-        relevant_docs = _filter_relevant_docs(query, docs, min_score=MIN_SCORE_THRESHOLD)
+        relevant_docs = _filter_relevant_docs(search_query, docs, min_score=MIN_SCORE_THRESHOLD)
         
         if not relevant_docs:
             # Check Q&A direct match before giving up
-            qna_match = _find_best_qna_answer_from_docs(query, docs) # Use original docs to find doc_id context
+            qna_match = _find_best_qna_answer_from_docs(search_query, docs) # Use original docs to find doc_id context
             if qna_match:
                 return {
                     "answer": qna_match["answer"],
@@ -697,7 +832,11 @@ async def answer_question(
             "2. แทรก Tag อ้างอิงประกอบเสมอเมื่ออ้างอิงตารางหรือรูปภาพ\n"
             "3. อธิบายข้อมูลสั้นๆ ให้เข้าใจง่าย\n"
             "\n"
-            "⚠️ กฎเหล็ก: ห้ามพิมพ์ตารางด้วยตัวอักษร ให้ใช้ [SHOW_TABLE:TBL_x] แทนเสมอ\n"
+            "⚠️ กฎเหล็ก:\n"
+            "1. ห้ามพิมพ์ตารางด้วยตัวอักษร ให้ใช้ [SHOW_TABLE:TBL_x] แทนเสมอ\n"
+            "2. หากผู้ใช้ถามหา 'บุคคล', 'ชื่อคน' หรือ 'ตัวเลขสำคัญ' ให้ตอบตามข้อมูลใน Context เท่านั้น ห้ามเดาหรือแต่งเรื่องเองเด็ดขาด\n"
+            "3. หากค้นหาชื่อบุคคลแล้วไม่พบใน Context ให้ตอบว่า 'ไม่พบข้อมูลที่ระบุชื่อบุคคลนี้'\n"
+            "4. หากขอดูรูป แล้วหารูปไม่เจอ ห้ามเดา Path เอง ให้ตอบว่า 'ไม่พบรูปภาพตามที่ขอ'\n"
             "\n"
             f"=== DOCUMENT CONTEXT ===\n{context_text}\n========================"
         )
@@ -709,11 +848,19 @@ async def answer_question(
     answer_text = ""
     ai_response = None
     
+    # 🧠 สร้าง Context ยัดประวัติการคุยให้ AI รู้เรื่อง
+    messages = [SystemMessage(content=system_prompt)]
+    for msg in chat_history:
+        if msg["role"] == "user":
+            messages.append(HumanMessage(content=msg["content"]))
+        else:
+            messages.append(AIMessage(content=msg["content"]))
+    messages.append(HumanMessage(content=search_query)) # ใช้คำถามที่ถูกเคลียร์แล้วถามเข้าไปใหม่
+
     # --- 1. แผน A: ลองใช้ Primary LLM (OpenRouter/Qwen) ---
     try:
         if llm:
-            # logger.info(f"[rag] 🚀 Trying Primary LLM ({_LL_MODEL_FAST})...")
-            ai_response = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+            ai_response = await llm.ainvoke(messages)
             answer_text = getattr(ai_response, "content", str(ai_response))
     except Exception as e:
         logger.warning(f"[rag] ❌ Primary LLM failed: {e}")
@@ -721,25 +868,22 @@ async def answer_question(
     # --- 2. แผน B: ถ้าแผน A พัง ให้ลองใช้ Google Gemini (Backup) ---
     if not answer_text or answer_text == "AI Error":
         try:
-            google_llm = _get_google_llm() # เรียกฟังก์ชันที่เราสร้างไว้
+            google_llm = _get_google_llm()
             if google_llm:
                 logger.info("[rag] 🔄 Switching to Backup LLM: Google Gemini...")
-                # ใช้ ainvoke เพื่อให้ทำงานแบบ Async ไม่บล็อกระบบ
-                ai_response = await google_llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=query)])
+                ai_response = await google_llm.ainvoke(messages)
                 answer_text = getattr(ai_response, "content", str(ai_response))
-            else:
-                logger.warning("[rag] Google API Key not found, skipping backup.")
-        except Exception as e_google:
-             logger.error(f"[rag] ❌ Google LLM also failed: {e_google}")
+        except Exception as e_google:  # <--- [เพิ่มบรรทัดนี้และบรรทัดล่าง]
+            logger.error(f"[rag] ❌ Google LLM also failed: {e_google}")
 
     # --- 3. แผน C (สุดท้าย): ถ้า Google ก็พังอีก (หรือโหมด Table บังคับ) ---
     # ถ้ายังไม่ได้คำตอบ หรือ ได้คำตอบว่างเปล่า
     if not answer_text:
         
-        # [Fail-safe] ถ้าเป็นโหมด Table แล้วเราเจอ ID ตารางในขั้นตอน Search (found_table_ids มีค่า)
-        # เราจะปล่อยให้เป็นค่าว่าง "" เพื่อให้ Code Override ด้านล่าง (Section 5) ทำงานดึงตารางมาโชว์เอง
-        if mode == "table" and found_table_ids:
-             answer_text = "" 
+        # [CRITICAL FIX] แก้ Fail-safe: ใช้ 'intent' แทน 'mode' 
+        # และบังคับใส่ Tag ตารางอันแรกที่หาเจอเข้าไปเลย ไม่ต้องเว้นว่าง!
+        if intent == "table" and found_table_ids:
+             answer_text = f"[SHOW_TABLE:TBL_{found_table_ids[0]}]" 
         else:
              # ถ้าเป็นโหมดทั่วไป ให้ยอมแพ้แล้วแสดง Raw Fallback (ข้อมูลดิบ)
              logger.warning("[rag] ⚠️ All LLMs failed. Using Raw Fallback.")

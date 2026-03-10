@@ -198,6 +198,11 @@ def _normalize_whitespace(text: str) -> str:
         s = str(text)
         s = _RE_ZERO_WIDTH.sub("", s)
         s = s.replace("\xa0", " ")
+        
+        # 🚀 [CRITICAL FIX] เวทมนตร์ดูดช่องว่างระหว่างตัวอักษรไทยที่ OCR ทำพัง
+        import re
+        s = re.sub(r'(?<=[\u0E00-\u0E7F])\s+(?=[\u0E00-\u0E7F])', '', s)
+        
         s = _RE_MULTI_NEWLINE.sub("\n\n", s)
         s = _RE_MULTI_SPACE.sub(" ", s)
         return s.strip()
@@ -326,6 +331,10 @@ def _format_chunk_content(group: Dict) -> Tuple[str, Dict]:
         content_parts.append("⚠️ [ข้อควรระวัง]")
     elif "troubleshooting" in semantic_meta["intent"]:
         content_parts.append("🔧 [การแก้ปัญหา]")
+    
+    # [CRITICAL FIX 1] ฝัง Keywords (เช่น ชื่อคน) ลงในเนื้อหาโดยตรงให้ Vector DB มองเห็น
+    if semantic_meta.get("entities"):
+        content_parts.append(f"🔍 [Keywords: {', '.join(semantic_meta['entities'])}]")
     
     page_numbers = set()
     block_types = set()
@@ -505,7 +514,8 @@ def _generate_table_semantic_rows(table: TableItem) -> str:
         if not row:
             continue
             
-        cells = [str(c or "").strip() for c in row]
+        # คลีนช่องว่างภาษาไทยในแต่ละ Cell ของตาราง
+        cells = [_normalize_whitespace(str(c or "")) for c in row]
         if not any(cells):
             continue
 
@@ -538,10 +548,11 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
         norm_extra = _normalize_table_extra(item)
         
         # Extract normalized fields
-        summary = norm_extra["summary"]
+        # [CRITICAL FIX] สมานแผลภาษาไทยให้ตาราง เพื่อให้ Vector มองเห็น!
+        summary = _normalize_whitespace(norm_extra["summary"])
         category = norm_extra["category"]
         role = norm_extra["role"]
-        markdown_raw = norm_extra["markdown_content"]
+        markdown_raw = _normalize_whitespace(norm_extra["markdown_content"])
         html_raw = norm_extra["html_content"]
         image_path = norm_extra["image_path"]
         is_complex = norm_extra["is_complex"]
@@ -557,7 +568,9 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
         
         # 3.1 Header / Name
         if item.name:
-            content_parts.append(f"📊 {item.name}")
+            # คลีนช่องว่างภาษาไทยในชื่อตารางด้วย!
+            clean_name = _normalize_whitespace(item.name)
+            content_parts.append(f"📊 {clean_name}")
         
         # 3.2 Category
         if category and category != "general":
@@ -597,8 +610,13 @@ def table_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
              unified_content = unified_content[:_MAX_CHUNK_CHARS - 50] + "\n...[ตัดทอนตาราง]..."
 
         # Intent Detection on the full content
-        combined_for_intent = f"{item.name or ''}\n{summary}\n{unified_content}"
+        clean_name_for_intent = _normalize_whitespace(item.name) if item.name else ''
+        combined_for_intent = f"{clean_name_for_intent}\n{summary}\n{unified_content}"
         semantic_meta = _extract_intent_and_entities(combined_for_intent, category)
+        
+        # [CRITICAL FIX 2] ยัด Keywords ต่อท้ายเนื้อหาตาราง เพื่อให้หาเจอเวลาเสิร์ชชื่อคน
+        if semantic_meta.get("entities"):
+            unified_content += f"\n🔍 [Keywords: {', '.join(semantic_meta['entities'])}]"
 
         # Step 5 - Metadata Construction
         metadata = {
@@ -655,6 +673,10 @@ def image_items_to_chunks(bundle: DocumentBundle) -> List[Chunk]:
             f"Page: {item.page or '?'}\n"
             f"Description: {content}"
         )
+        
+        # [CRITICAL FIX 3] ยัด Keywords ลงในคำอธิบายรูปภาพด้วย
+        if semantic_meta.get("entities"):
+            formatted_content += f"\n🔍 [Keywords: {', '.join(semantic_meta['entities'])}]"
 
         chunks.append(
             Chunk(

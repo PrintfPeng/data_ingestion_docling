@@ -19,6 +19,7 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
     TableStructureOptions,
+    EasyOcrOptions, # <--- ใช้ EasyOCR แทน! ติดตั้งง่ายกว่าล้านเท่า!
 )
 
 # Project Schema
@@ -31,8 +32,8 @@ from .schema import (
 )
 
 
-
 logger = logging.getLogger(__name__)
+
 
 # -------------------------------------------------------------------
 # MAIN PARSER (Table Extractor)
@@ -43,6 +44,10 @@ class DoclingParser:
 
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
+        
+        # 🚀 [CRITICAL FIX] เปลี่ยนมาใช้ EasyOCR แทน เพราะติดตั้งง่ายบน Windows
+        pipeline_options.ocr_options = EasyOcrOptions(lang=["th", "en"]) # EasyOCR ใช้รหัสภาษา th, en
+        
         pipeline_options.do_table_structure = True
         pipeline_options.table_structure_options = TableStructureOptions(
             do_cell_matching=True
@@ -74,14 +79,16 @@ class DoclingParser:
                         img = page.image.image
                     else:
                         img = page.image
-                
+
                 # ถ้าหาไม่เจอ หรือเป็น None ให้บังคับสร้างใหม่ (Force Render)
                 if img is None:
                     try:
                         # บังคับ Render ที่ Scale 3.0
                         img = page.get_image(scale=3.0)
                     except Exception as e:
-                        logger.warning(f"Could not render image for page {page_no}: {e}")
+                        logger.warning(
+                            f"Could not render image for page {page_no}: {e}"
+                        )
 
                 if img:
                     page_images[page_no] = img
@@ -140,10 +147,11 @@ class DoclingParser:
                     )
                 )
         return blocks
-#-------------------------------------------------------------------#
+
+    # -------------------------------------------------------------------#
     def _detect_table_regions(self, pil_image):
-        #Detect all possible table regions from a page.
-        #Returns list of (x0,y0,x1,y1)
+        # Detect all possible table regions from a page.
+        # Returns list of (x0,y0,x1,y1)
 
         img = np.array(pil_image)
 
@@ -156,7 +164,7 @@ class DoclingParser:
             gray,
             255,
             cv2.ADAPTIVE_THRESH_MEAN_C,
-             cv2.THRESH_BINARY_INV,
+            cv2.THRESH_BINARY_INV,
             15,
             5,
         )
@@ -170,9 +178,7 @@ class DoclingParser:
         horizontal_kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT, (horizontal_len, 1)
         )
-        vertical_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (1, vertical_len)
-        )
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_len))
 
         horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel)
         vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel)
@@ -199,7 +205,7 @@ class DoclingParser:
 
         return regions
 
-# -------------------------------------------------------------------#
+    # -------------------------------------------------------------------#
 
     def _match_best_region(self, regions, docling_bbox):
 
@@ -214,7 +220,7 @@ class DoclingParser:
         best_score = 0
         best_region = None
 
-        for (x0, y0, x1, y1) in regions:
+        for x0, y0, x1, y1 in regions:
 
             inter_x0 = max(x0, dx0)
             inter_y0 = max(y0, dy0)
@@ -272,26 +278,28 @@ class DoclingParser:
                 if img_obj:
                     filename = f"table_p{page_no:03d}_{i:03d}.png"
                     full_path = os.path.join(img_output_dir, filename)
-                    
+
                     # เซฟรูปลงโฟลเดอร์
                     img_obj.save(full_path, "PNG")
                     saved_image_path = f"images/{filename}"
 
                     # สร้าง ImageBlock
-                    img_blocks.append(ImageBlock(
-                        id=f"img_tbl_{i}",
-                        doc_id=doc_id,
-                        page=page_no,
-                        file_path=saved_image_path,
-                        caption=table_caption, # [FIXED] ใส่เนื้อหาตารางลงไปใน Caption
-                        bbox=bbox_tuple,
-                        section="table",
-                        category="table_image",
-                        extra={
-                            "source": "docling_native",
-                            "markdown": md # เก็บ Markdown ไว้ใน extra ด้วยเผื่อใช้
-                        }
-                    ))
+                    img_blocks.append(
+                        ImageBlock(
+                            id=f"img_tbl_{i}",
+                            doc_id=doc_id,
+                            page=page_no,
+                            file_path=saved_image_path,
+                            caption=table_caption,  # [FIXED] ใส่เนื้อหาตารางลงไปใน Caption
+                            bbox=bbox_tuple,
+                            section="table",
+                            category="table_image",
+                            extra={
+                                "source": "docling_native",
+                                "markdown": md,  # เก็บ Markdown ไว้ใน extra ด้วยเผื่อใช้
+                            },
+                        )
+                    )
             except Exception as e:
                 logger.warning(f"Failed to extract table image natively: {e}")
 
@@ -313,6 +321,7 @@ class DoclingParser:
             )
 
         return blocks, img_blocks
+
 
 # -------------------------------------------------------------------
 # IMAGE PARSER (General Image Extractor)
