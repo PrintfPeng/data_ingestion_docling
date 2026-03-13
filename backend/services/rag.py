@@ -356,8 +356,9 @@ def _rerank_documents(query: str, docs: list, top_k: int) -> list:
         source_type = str(getattr(d, "metadata", {}).get("source", "text")).lower()
         query_lower = query.lower()
         
-        is_img_q = any(x in query_lower for x in ["รูป", "ภาพ", "image", "logo", "กราฟ", "แผนภูมิ"])
-        is_tbl_q = any(x in query_lower for x in ["ตาราง", "table", "ฟอร์ม", "แบบฟอร์ม"])
+        # แก้ Keyword ป้องกันคำกำกวมเช่น "บุคลิกภาพ", "คุณภาพ", "สรุปใจความ"
+        is_img_q = any(x in query_lower for x in ["รูปภาพ", "image", "logo", "กราฟ", "แผนภูมิ", "ถ่ายรูป"])
+        is_tbl_q = any(x in query_lower for x in ["ตาราง", "table", "แบบฟอร์ม", "สถิติ"])
         
         if is_img_q:
             if source_type != "image":
@@ -645,9 +646,11 @@ async def answer_question(
 # [NEW] STEP 2: Mode Selection (Deterministic)
     if mode == "auto":
         q_lower = query.lower()
-        if any(x in q_lower for x in ["ตาราง", "table", "ยอด", "สถิติ", "list", "รายการ", "สรุป", "ฟอร์ม", "แบบฟอร์ม"]):
+        # ตัดคำว่า "สรุป", "รายการ", "ยอด" ออก ป้องกันการลั่น
+        if any(x in q_lower for x in ["ตาราง", "table", "สถิติ", "แบบฟอร์ม"]):
             intent = "table"
-        elif any(x in q_lower for x in ["รูป", "ภาพ", "image", "logo", "โลโก้", "กราฟ", "แผนภูมิ", "แผนภาพ"]):
+        # ตัดคำว่า "ภาพ", "รูป" เพียวๆ ออก ป้องกันลั่นกับ "บุคลิกภาพ"
+        elif any(x in q_lower for x in ["รูปภาพ", "image", "logo", "โลโก้", "กราฟ", "แผนภูมิ", "แผนภาพ"]):
             intent = "image"
         else:
             intent = "text"
@@ -815,7 +818,7 @@ async def answer_question(
             f"=== CONTEXT ===\n{context_text}\n==============="
         )
     else:
-        # === MODE 2: SMART ANALYST ===
+# === MODE 2: SMART ANALYST ===
         system_prompt = (
             "บทบาท: คุณคือ 'ผู้เชี่ยวชาญด้านเอกสาร' ที่เน้นความถูกต้องของข้อมูลสูงสุด\n"
             "หน้าที่: ตอบคำถามจาก Context ที่ให้มา โดยเลือกวิธีนำเสนอที่ดีที่สุด\n"
@@ -825,12 +828,12 @@ async def answer_question(
             "   - ให้ใช้ Tag: [SHOW_TABLE:TBL_x] ตามรหัสที่ระบุใน SOURCE เสมอ\n"
             "   - ห้ามวาดตาราง Markdown |...| เองเด็ดขาด!\n"
             "2. **สำหรับ 'รูปภาพทั่วไป':**\n"
-            "   - ให้ใช้ Tag: [SHOW_IMAGE: filepath] โดยก็อปปี้ค่าจาก file_path มาใส่ให้ถูกต้อง\n" # <--- แก้บรรทัดนี้ เลิกใช้เครื่องหมาย < >
+            "   - ให้ใช้ Tag: [SHOW_IMAGE: filepath] โดยก็อปปี้ค่าจาก file_path มาใส่ให้ถูกต้อง\n"
             "\n"
             "📋 รูปแบบการตอบ:\n"
             "1. ตอบคำถามให้ตรงประเด็น\n"
             "2. แทรก Tag อ้างอิงประกอบเสมอเมื่ออ้างอิงตารางหรือรูปภาพ\n"
-            "3. อธิบายข้อมูลสั้นๆ ให้เข้าใจง่าย\n"
+            "3. **[สำคัญมาก]** ห้ามใส่รูปแบบดิบๆ อย่าง [SOURCE 1, SOURCE 2] และ (อ้างอิงจาก SOURCE 3) ท้ายประโยคเด็ดขาด!\n"
             "\n"
             "⚠️ กฎเหล็ก:\n"
             "1. ห้ามพิมพ์ตารางด้วยตัวอักษร ให้ใช้ [SHOW_TABLE:TBL_x] แทนเสมอ\n"

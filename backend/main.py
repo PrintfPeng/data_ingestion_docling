@@ -8,6 +8,8 @@ import sys
 import os
 import re
 import time
+import hashlib  
+import json     
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -43,18 +45,15 @@ app.mount("/ingested", StaticFiles(directory=str(INGESTED_DIR)), name="ingested"
 # 3. Upload Directory
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-
 # -----------------------------------------------------------
-# Helper: ID Normalization
+# Helper: ID Normalization (เข้ารหัสกันภาษาไทยเพี้ยน)
 # -----------------------------------------------------------
 def _normalize_id(raw_id: str) -> str:
     if not raw_id:
         return "unknown_doc"
-    s = raw_id.strip().lower()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^a-z0-9_\-\u0E00-\u0E7F]", "", s)
-    return s
-
+    # ใช้ MD5 Hash แปลงชื่อภาษาไทย/อังกฤษ ให้เป็นรหัสตัวอักษรล้วนๆ ไม่มีทางเพี้ยน
+    hashed = hashlib.md5(raw_id.encode('utf-8')).hexdigest()
+    return f"doc_{hashed[:12]}" # เอาแค่ 12 ตัวแรกก็พอสั้นๆ
 
 # -----------------------------------------------------------
 # Health Check
@@ -87,10 +86,22 @@ class AskResponse(BaseModel):
 
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
-    # 1. Normalize IDs
+    # [จุดที่ 1] ดักดูว่าคำถามเข้าเซิร์ฟเวอร์จริงไหม!
+    print(f"👉 [API] ได้รับคำถามแล้ว: '{req.query}' | กำลังส่งให้ AI คิด...", flush=True)
+
+    # 1. Normalize IDs (แก้ตรงนี้แหละ!! ป้องกันการเข้ารหัสซ้ำซ้อน)
     sanitized_doc_ids = None
     if req.doc_ids:
-        sanitized_doc_ids = [_normalize_id(did) for did in req.doc_ids if did]
+        sanitized_doc_ids = []
+        for did in req.doc_ids:
+            if not did: 
+                continue
+            # ถ้าชื่อมันขึ้นต้นด้วย "doc_" (แปลว่าโดนแปลงรหัสมาแล้ว) ก็ให้ใช้ได้เลย!
+            if did.startswith("doc_"):
+                sanitized_doc_ids.append(did)
+            # แต่ถ้ายังเป็นภาษาไทยหรือชื่อเดิมอยู่ ค่อยส่งไปเข้ารหัส
+            else:
+                sanitized_doc_ids.append(_normalize_id(did))
 
     # 2. Call RAG Service
     result = await answer_question(
@@ -99,6 +110,8 @@ async def ask(req: AskRequest):
         top_k=req.top_k,
         mode=req.mode,
     )
+    # [จุดที่ 2] ดักดูว่า AI คิดเสร็จไหม!
+    print(f"✅ [API] AI คิดคำตอบเสร็จแล้ว! กำลังเตรียมส่งกลับมือถือ...", flush=True)
 
     # Post-Processing: Convert [SHOW_TABLE] tags
     answer_text = result.get("answer", "")
@@ -218,6 +231,13 @@ async def upload_pdf(
     finally:
         file.file.close()
 
+    # --- [เพิ่มโค้ดส่วนนี้เข้าไป] แอบเก็บชื่อต้นฉบับภาษาไทยไว้ในโฟลเดอร์ ---
+    doc_ingest_dir = INGESTED_DIR / safe_doc_id
+    doc_ingest_dir.mkdir(parents=True, exist_ok=True)
+    with open(doc_ingest_dir / "meta.json", "w", encoding="utf-8") as meta_f:
+        json.dump({"original_name": doc_id}, meta_f, ensure_ascii=False)
+    # -------------------------------------------------------
+
     # 4. Run Ingestion Pipeline
     try:
         print(f"[UPLOAD] 🛑 Releasing DB lock before ingestion...")
@@ -265,7 +285,6 @@ async def upload_pdf(
         "pipeline": "hybrid_ingestion",
     }
 
-
 # -----------------------------------------------------------
 # /documents (List Documents)
 # -----------------------------------------------------------
@@ -275,13 +294,24 @@ def list_documents():
     if INGESTED_DIR.exists():
         for item in INGESTED_DIR.iterdir():
             if item.is_dir():
+                doc_name = item.name # ค่าเริ่มต้นให้เป็นรหัส Hash เผื่อไฟล์ meta หาย
+                
+                # พยายามอ่านชื่อภาษาไทยจากไฟล์ meta.json
+                meta_file = item / "meta.json"
+                if meta_file.exists():
+                    try:
+                        with open(meta_file, "r", encoding="utf-8") as meta_f:
+                            meta_data = json.load(meta_f)
+                            doc_name = meta_data.get("original_name", doc_name)
+                    except Exception:
+                        pass
+
                 docs.append({
-                    "id": item.name,
-                    "name": item.name 
+                    "id": item.name,   # เอา ID Hash ไปประมวลผลหลังบ้าน (รูปตารางจะไม่พังแล้ว)
+                    "name": doc_name   # เอาชื่อภาษาไทยไปโชว์ใน Dropdown
                 })
     docs.sort(key=lambda x: x["name"])
     return {"documents": docs}
-
 
 # -----------------------------------------------------------
 # Root Redirect
