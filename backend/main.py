@@ -150,7 +150,15 @@ async def ask(req: AskRequest):
             answer_text = answer_text.replace(tag_str, "")
 
     result["answer"] = answer_text
-
+    
+    # 2. Call RAG Service
+    result = await answer_question(
+        query=req.query,
+        doc_ids=sanitized_doc_ids,
+        top_k=req.top_k,
+        mode=req.mode,
+        history=None # หรือใส่ค่าประวัติการสนทนาถ้ามีระบบจำความจำ
+    )
     # Logging
     try:
         append_log({
