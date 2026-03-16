@@ -19,7 +19,7 @@ langchain-google-genai
 google-generativeai
 sentence-transformers
 chromadb
-
+litellm
 # --- PDF & Image Processing ---
 pymupdf
 camelot-py

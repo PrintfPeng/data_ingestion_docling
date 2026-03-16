@@ -22,7 +22,12 @@ from pathlib import Path
 from scripts.run_ingestion import run_ingestion_pipeline
 from scripts.run_cleaning import run_cleaning
 from scripts.run_semantic_enrich import run_semantic_enrich
+# scripts/run_all.py
 
+# ปรับ default ของการใช้ AI ให้เป็น False สำหรับ Gemini 
+# หรือเพิ่ม parameter สำหรับเลือก Local Model
+parser.add_argument("--use-gemini", action="store_true", help="Use Gemini OCR")
+parser.add_argument("--use-local-ai", action="store_true", default=True, help="Use Qwen via Local API")
 
 def run_all(
     pdf_path: str | Path,
