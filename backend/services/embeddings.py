@@ -51,6 +51,17 @@ def get_embedding_client() -> HuggingFaceEmbeddings:
     return _embeddings_client
 
 
+def embed_texts(texts: List[str]) -> List[List[float]]:
+    """
+    Batch-embed ข้อความหลายก้อน คืน list ของ embedding vector
+    (ถูกเรียกโดย embed_with_metadata ด้านล่าง)
+    """
+    if not texts:
+        return []
+    client = get_embedding_client()
+    return client.embed_documents(texts)
+
+
 def _keyword_overlap_count(query: str, text: str) -> int:
     """นับจำนวนคำที่ตรงกัน (รองรับภาษาไทยด้วย PyThaiNLP)"""
     

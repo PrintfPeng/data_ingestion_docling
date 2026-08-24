@@ -120,16 +120,22 @@ def main() -> None:
         help="Root folder ของผล ingestion (default: 'ingested')",
     )
     parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="ถ้าระบุ flag นี้ จะให้ LLM (Qwen/Gemini) ช่วย tag section",
+    )
+    # [COMPAT] เก็บ --use-gemini ไว้เป็น alias เพื่อไม่ให้สคริปต์เก่าพัง
+    parser.add_argument(
         "--use-gemini",
         action="store_true",
-        help="ถ้าระบุ flag นี้ จะให้ Gemini ช่วย tag section",
+        help="Alias for --use-llm",
     )
     args = parser.parse_args()
 
     run_semantic_enrich(
         doc_id=args.doc_id,
         output_root=args.output_root,
-        use_llm =args.use_llm ,
+        use_llm=args.use_llm or args.use_gemini,
     )
 
 

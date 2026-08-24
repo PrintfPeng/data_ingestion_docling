@@ -2,6 +2,13 @@
 import sys
 import os
 
+# บังคับ stdout ให้เป็น UTF-8 เพื่อไม่ให้ emoji ทำ Windows terminal (cp1252) พัง
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, Exception):
+    pass
+
 # เพิ่ม path เพื่อให้ Python หา module 'ingestion' เจอ
 sys.path.append(os.getcwd())
 

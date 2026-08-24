@@ -1,0 +1,58 @@
+# --- VCS ---
+.git
+.gitignore
+.gitattributes
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Docker / Compose ---
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# --- Env / Secrets (ต้องส่งผ่าน docker-compose env_file ตอน run) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Runtime data (จะ mount volume ตอน run) ---
+ingested/
+uploads/
+chroma_db/
+logs/
+tmp/
+cache/
+.gemini/
+
+# --- Reports / debug outputs ---
+eval_report*.html
+debug_ocr_*.png
+
+# --- Samples / user PDFs ---
+samples/
+*.pdf
+
+# --- Node artefacts (frontend เป็น static ไม่ต้อง build) ---
+node_modules/
+package-lock.json

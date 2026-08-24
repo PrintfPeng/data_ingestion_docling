@@ -8,6 +8,13 @@ import json
 from pathlib import Path
 from litellm import completion
 
+# บังคับ stdout ให้เป็น UTF-8 เพื่อไม่ให้ emoji ทำ Windows terminal (cp1252) พัง
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, Exception):
+    pass
+
 # --- SETUP PATH & ENV ---
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
@@ -23,29 +30,37 @@ PRIMARY_PROVIDER = "custom"
 BACKUP_MODEL = "gemini/gemini-2.5-flash"
 BACKUP_PROVIDER = "google"
 
-# --- CHECK API KEYS ---
+# --- CHECK API KEYS (moved to _check_api_keys() so this module can be imported safely) ---
 HAS_PRIMARY = False
 HAS_BACKUP = False
 
-# Setup Primary (Custom Qwen)
-if os.getenv("CUSTOM_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.getenv("CUSTOM_API_KEY")
-    os.environ["OPENAI_API_BASE"] = os.getenv("CUSTOM_API_BASE", "http://111.223.37.51/v1")
-    HAS_PRIMARY = True
-    print(f"🔵 Primary Judge Ready: {PRIMARY_MODEL}")
-else:
-    print("⚠️ Warning: CUSTOM_API_KEY missing. Primary judge unavailable.")
 
-# Setup Backup (Google Gemini)
-if os.getenv("GOOGLE_API_KEY"):
-    HAS_BACKUP = True
-    print(f"🟢 Backup Judge Ready: {BACKUP_MODEL}")
-else:
-    print("⚠️ Warning: GOOGLE_API_KEY missing. Backup judge unavailable.")
+def _check_api_keys() -> None:
+    """
+    ตรวจสอบและตั้งค่า API keys — เรียกจาก main() เท่านั้น
+    ถ้าไม่มี key เลยจะ sys.exit(1)
+    """
+    global HAS_PRIMARY, HAS_BACKUP
 
-if not HAS_PRIMARY and not HAS_BACKUP:
-    print("🔴 ERROR: No API Keys found (Neither Custom nor Google). Exiting.")
-    sys.exit(1)
+    # Setup Primary (Custom Qwen)
+    if os.getenv("CUSTOM_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = os.getenv("CUSTOM_API_KEY")
+        os.environ["OPENAI_API_BASE"] = os.getenv("CUSTOM_API_BASE", "http://111.223.37.51/v1")
+        HAS_PRIMARY = True
+        print(f"🔵 Primary Judge Ready: {PRIMARY_MODEL}")
+    else:
+        print("⚠️ Warning: CUSTOM_API_KEY missing. Primary judge unavailable.")
+
+    # Setup Backup (Google Gemini)
+    if os.getenv("GOOGLE_API_KEY"):
+        HAS_BACKUP = True
+        print(f"🟢 Backup Judge Ready: {BACKUP_MODEL}")
+    else:
+        print("⚠️ Warning: GOOGLE_API_KEY missing. Backup judge unavailable.")
+
+    if not HAS_PRIMARY and not HAS_BACKUP:
+        print("🔴 ERROR: No API Keys found (Neither Custom nor Google). Exiting.")
+        sys.exit(1)
 
 # --- QUESTION DATASET (30 Questions) ---
 eval_questions = [
@@ -154,6 +169,9 @@ async def safe_rag_call(query):
 
 # --- MAIN ---
 async def main():
+    # ตรวจสอบ API key ก่อนเริ่ม (ย้ายมาจาก top-level เพื่อให้ import ไฟล์นี้ได้)
+    _check_api_keys()
+
     print(f"🚀 Starting Hybrid Evaluation")
     if HAS_PRIMARY: print(f"   Main: {PRIMARY_MODEL}")
     if HAS_BACKUP:  print(f"   Backup: {BACKUP_MODEL}")
