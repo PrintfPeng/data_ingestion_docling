@@ -87,6 +87,37 @@
               <input id="fileInputLanding" type="file" accept="application/pdf" hidden />
             </div>
 
+            <!-- OCR Mode Selector -->
+            <div class="mt-5 ocr-mode-picker" role="radiogroup" aria-label="OCR mode">
+              <div class="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/></svg>
+                วิธีประมวลผล OCR
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <label class="ocr-mode-option">
+                  <input type="radio" name="ocrMode" value="auto" checked>
+                  <div class="ocr-mode-body">
+                    <div class="ocr-mode-title">🔀 Auto (แนะนำ)</div>
+                    <div class="ocr-mode-desc">Gemini ถ้ามี key, ไม่งั้น Docling</div>
+                  </div>
+                </label>
+                <label class="ocr-mode-option">
+                  <input type="radio" name="ocrMode" value="local">
+                  <div class="ocr-mode-body">
+                    <div class="ocr-mode-title">🔒 Local เท่านั้น</div>
+                    <div class="ocr-mode-desc">Docling ในเครื่อง — ข้อมูลไม่ออก server</div>
+                  </div>
+                </label>
+                <label class="ocr-mode-option">
+                  <input type="radio" name="ocrMode" value="api">
+                  <div class="ocr-mode-body">
+                    <div class="ocr-mode-title">⚡ Cloud API</div>
+                    <div class="ocr-mode-desc">Gemini Vision — คุณภาพสูงสุด</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             <div id="landingUploadStatus" class="mt-4 hidden"></div>
           </section>
 

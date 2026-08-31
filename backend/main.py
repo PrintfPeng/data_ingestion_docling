@@ -251,12 +251,16 @@ def get_history(limit: int = 50):
 # -----------------------------------------------------------
 # /upload (Multi-Document Mode)
 # -----------------------------------------------------------
+_VALID_OCR_MODES = {"auto", "local", "api"}
+
+
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
 async def upload_pdf(
     file: UploadFile = File(...),
     doc_id: str = Form(...),
     doc_type: str = Form(""),
     use_ocr: bool = Form(True),
+    ocr_mode: str = Form("auto"),
 ):
     # 0. Defaults
     if not doc_type.strip(): doc_type = "generic_doc"
@@ -266,6 +270,12 @@ async def upload_pdf(
         raise HTTPException(status_code=400, detail="รองรับเฉพาะไฟล์ PDF เท่านั้น")
     if not doc_id.strip():
         raise HTTPException(status_code=400, detail="ต้องระบุ doc_id")
+
+    ocr_mode = (ocr_mode or "auto").lower().strip()
+    if ocr_mode not in _VALID_OCR_MODES:
+        raise HTTPException(status_code=400, detail=f"ocr_mode ต้องเป็น auto/local/api (ได้: {ocr_mode})")
+    if ocr_mode == "api" and not (os.getenv("VISION_API_KEY") or "").strip():
+        raise HTTPException(status_code=400, detail="ocr_mode='api' ต้องตั้ง VISION_API_KEY บน server ก่อน")
 
     safe_doc_id = _normalize_id(doc_id)
     print(f"[UPLOAD] Received doc_id='{doc_id}' -> normalized='{safe_doc_id}'")
@@ -293,10 +303,12 @@ async def upload_pdf(
             str(dest_path),
             "--doc-id", safe_doc_id,
             "--doc-type", doc_type,
-            "--output-root", str(INGESTED_DIR) 
+            "--output-root", str(INGESTED_DIR)
         ]
-        if script_name == "scripts.run_ingestion" and not use_ocr:
-            cmd.append("--no-ocr")
+        if script_name == "scripts.run_ingestion":
+            if not use_ocr:
+                cmd.append("--no-ocr")
+            cmd.extend(["--ocr-mode", ocr_mode])
             
         print(f"[UPLOAD] Running pipeline: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
@@ -325,6 +337,7 @@ async def upload_pdf(
         "doc_id": safe_doc_id,
         "original_doc_id": doc_id,
         "doc_type": doc_type,
+        "ocr_mode": ocr_mode,
         "message": "File uploaded and ingested successfully (Append Mode).",
         "pipeline": "hybrid_ingestion",
     }

@@ -512,11 +512,18 @@ function appendMessage(role, text, options = {}) {
 }
 
 // [FIX 2] ปรับปรุงการส่ง ID ใน uploadFileToBackend (แต่ Logic หลักจะอยู่ที่ sendMessage)
-async function uploadFileToBackend(file, docId) {
+function getSelectedOcrMode() {
+    const el = document.querySelector('input[name="ocrMode"]:checked');
+    const val = el?.value || "auto";
+    return ["auto", "local", "api"].includes(val) ? val : "auto";
+}
+
+async function uploadFileToBackend(file, docId, ocrMode) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("doc_id", docId);
     formData.append("doc_type", "");
+    formData.append("ocr_mode", ocrMode || getSelectedOcrMode());
     const res = await fetch("/upload", {
         method: "POST",
         headers: { ...getAuthHeader() },

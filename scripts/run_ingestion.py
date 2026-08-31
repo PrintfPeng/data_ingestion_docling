@@ -150,6 +150,7 @@ def run_ingestion_pipeline(
     doc_id: Optional[str] = None,
     output_root: str | Path = "ingested",
     use_ocr: bool = True,
+    ocr_mode: str = "auto",
 ) -> None:
     """
     Ingestion pipeline (Hybrid Version):
@@ -186,7 +187,7 @@ def run_ingestion_pipeline(
     
     try:
         parser = DoclingParser(config=config)
-        doc = parser.parse(str(pdf_path))
+        doc = parser.parse(str(pdf_path), ocr_mode=ocr_mode)
     except Exception as e:
         print(f"[ERROR] Docling parsing failed: {e}")
         return
@@ -317,6 +318,12 @@ def main() -> None:
         action="store_true",
         help="Disable extra OCR (Docling has built-in OCR)",
     )
+    parser.add_argument(
+        "--ocr-mode",
+        default="auto",
+        choices=["auto", "local", "api"],
+        help="OCR strategy: auto (default hybrid), local (Docling only), api (require Vision API)",
+    )
     args = parser.parse_args()
 
     run_ingestion_pipeline(
@@ -325,6 +332,7 @@ def main() -> None:
         doc_id=args.doc_id,
         output_root=args.output_root,
         use_ocr=not args.no_ocr,
+        ocr_mode=args.ocr_mode,
     )
 
 

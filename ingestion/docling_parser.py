@@ -48,22 +48,30 @@ logger = logging.getLogger(__name__)
 # -------------------------------------------------------------------
 # MAIN PARSER (Table Extractor)
 # -------------------------------------------------------------------
+OCR_MODE_AUTO = "auto"
+OCR_MODE_LOCAL = "local"
+OCR_MODE_API = "api"
+OCR_MODES = (OCR_MODE_AUTO, OCR_MODE_LOCAL, OCR_MODE_API)
+
+
 class DoclingParser:
     def __init__(self, config=None):
         self.config = config
+        self.image_scale = 3.0
+        # Lazy converter cache — one per (do_ocr) setting so we don't rebuild
+        # heavy pipeline options on every parse() call.
+        self._converters: Dict[bool, "DocumentConverter"] = {}
 
+    def _build_converter(self, do_ocr: bool) -> "DocumentConverter":
         pipeline_options = PdfPipelineOptions()
-        # Skip Docling's built-in OCR when OpenRouter Vision OCR will replace text
-        pipeline_options.do_ocr = not bool(os.getenv("VISION_API_KEY"))
+        pipeline_options.do_ocr = do_ocr
         pipeline_options.do_table_structure = True
         pipeline_options.table_structure_options = TableStructureOptions(
             do_cell_matching=True
         )
         pipeline_options.generate_page_images = True
-        pipeline_options.images_scale = 3.0
-        self.image_scale = 3.0
+        pipeline_options.images_scale = self.image_scale
 
-        # GPU acceleration for Docling layout/table models when available
         if _HAS_ACCEL_OPTS:
             try:
                 import torch
@@ -71,17 +79,47 @@ class DoclingParser:
                     pipeline_options.accelerator_options = AcceleratorOptions(
                         num_threads=4, device=AcceleratorDevice.CUDA
                     )
-                    logger.info("[docling] AcceleratorOptions: CUDA enabled")
+                    logger.info(f"[docling] CUDA enabled (do_ocr={do_ocr})")
             except Exception as e:
                 logger.warning(f"[docling] could not enable CUDA accelerator: {e}")
 
-        self.converter = DocumentConverter(
+        return DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
             }
         )
 
-    def parse(self, file_path: str) -> IngestedDocument:
+    def _get_converter(self, do_ocr: bool) -> "DocumentConverter":
+        if do_ocr not in self._converters:
+            self._converters[do_ocr] = self._build_converter(do_ocr)
+        return self._converters[do_ocr]
+
+    def _resolve_ocr_mode(self, ocr_mode: str) -> Tuple[bool, bool]:
+        """Given user's ocr_mode, decide (docling_do_ocr, use_vision_api).
+
+        - "local" → Docling built-in OCR only (no external calls). RapidOCR/etc.
+        - "api"   → Vision API (Gemini) replaces text; requires VISION_API_KEY.
+        - "auto"  → current default: Vision when key present, else Docling.
+        """
+        vision_available = bool(os.getenv("VISION_API_KEY"))
+        mode = (ocr_mode or OCR_MODE_AUTO).lower().strip()
+        if mode == OCR_MODE_LOCAL:
+            return True, False
+        if mode == OCR_MODE_API:
+            if not vision_available:
+                raise ValueError("ocr_mode='api' requires VISION_API_KEY on server")
+            return False, True
+        # auto (default)
+        return (not vision_available), vision_available
+
+    def parse(self, file_path: str, ocr_mode: str = OCR_MODE_AUTO) -> IngestedDocument:
+        self._active_ocr_mode = ocr_mode  # stash for logging in the OCR block
+        docling_do_ocr, use_vision = self._resolve_ocr_mode(ocr_mode)
+        logger.info(
+            f"[docling] ocr_mode={ocr_mode} → docling_do_ocr={docling_do_ocr}, use_vision={use_vision}"
+        )
+        self.converter = self._get_converter(docling_do_ocr)
+        self._use_vision_this_run = use_vision
         logger.info(f"Starting Docling parse for: {file_path}")
         try:
             conv_res = self.converter.convert(file_path)
@@ -115,12 +153,12 @@ class DoclingParser:
             text_blocks = self._process_text(doc, doc_id)
 
             # -------- OpenRouter Vision OCR override (whole-page) --------
-            # If enabled via env, OCR overrides Docling's text layer
-            # (needed for scanned PDFs / broken Thai font mappings).
-            # Hybrid A+B was tested but regressed (-3.9% judge); reverted.
-            if os.getenv("VISION_API_KEY") and OpenRouterVisionOCR is not None:
+            # Runs only when the resolved ocr_mode says so
+            # (auto with VISION_API_KEY, or explicit "api" mode).
+            # Local mode skips this entirely — no external calls.
+            if self._use_vision_this_run and OpenRouterVisionOCR is not None:
                 try:
-                    logger.info("VISION_API_KEY detected → running OpenRouter OCR")
+                    logger.info(f"[docling] ocr_mode={self._active_ocr_mode} → running OpenRouter Vision OCR")
                     ocr = OpenRouterVisionOCR()
                     ocr_pages = ocr.ocr_pdf(file_path)
                     ocr_blocks: List[TextBlock] = []
@@ -134,7 +172,11 @@ class DoclingParser:
                                 content=page["content"],
                                 page=page["page"],
                                 bbox=None,
-                                extra={"role": "ocr", "source": "openrouter_vision"},
+                                extra={
+                                    "role": "ocr",
+                                    "source": "openrouter_vision",
+                                    "ocr_mode": self._active_ocr_mode,
+                                },
                             )
                         )
                     if ocr_blocks:
@@ -146,6 +188,13 @@ class DoclingParser:
                         logger.warning("OCR returned no text — keeping Docling text")
                 except Exception as e:
                     logger.error(f"OpenRouter OCR failed, falling back to Docling text: {e}")
+            else:
+                # local mode — tag Docling text with the mode for traceability
+                for tb in text_blocks:
+                    if tb.extra is None:
+                        tb.extra = {}
+                    tb.extra.setdefault("source", "docling")
+                    tb.extra["ocr_mode"] = self._active_ocr_mode
 
             # Prepare output dir
             output_dir = None
