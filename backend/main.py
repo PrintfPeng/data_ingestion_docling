@@ -8,14 +8,39 @@ import sys
 import os
 import re
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import RedirectResponse
+import json
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# -----------------------------------------------------------
+# API Key Authentication
+# -----------------------------------------------------------
+# If APP_API_KEY env var is not set (or empty), auth is DISABLED
+# and all endpoints work without an Authorization header.
+# If set, clients must send: Authorization: Bearer <key>
+APP_API_KEY = (os.getenv("APP_API_KEY") or "").strip()
+
+
+def verify_api_key(authorization: Optional[str] = Header(None)) -> None:
+    """FastAPI dependency: validate the Bearer token in Authorization header.
+    Skips validation entirely when APP_API_KEY is not configured (dev mode).
+    """
+    if not APP_API_KEY:
+        return  # auth disabled
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header. Set API key in Settings.",
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    if token != APP_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
 # Internal services
 from .services.logger import append_log, read_logs
-from .services.rag import answer_question
+from .services.rag import answer_question, answer_question_stream
 from .services.vector_store import reset_vector_store_cache
 
 # Config Paths
@@ -87,7 +112,7 @@ class AskResponse(BaseModel):
     mode: str
     tables: List[Dict[str, Any]] = []
 
-@app.post("/ask", response_model=AskResponse)
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(verify_api_key)])
 async def ask(req: AskRequest):
     # 1. Normalize IDs
     sanitized_doc_ids = None
@@ -167,6 +192,42 @@ async def ask(req: AskRequest):
 # -----------------------------------------------------------
 # /history
 # -----------------------------------------------------------
+# -----------------------------------------------------------
+# /ask/stream — SSE streaming variant of /ask
+# -----------------------------------------------------------
+@app.post("/ask/stream", dependencies=[Depends(verify_api_key)])
+async def ask_stream(req: AskRequest):
+    """Stream the answer token-by-token via Server-Sent Events.
+    Emits the retrieved sources first, then tokens, then a done event.
+    """
+    sanitized_doc_ids = None
+    if req.doc_ids:
+        sanitized_doc_ids = [_normalize_id(d) for d in req.doc_ids if d]
+
+    async def event_stream():
+        try:
+            async for event_name, payload in answer_question_stream(
+                query=req.query,
+                doc_ids=sanitized_doc_ids,
+                top_k=req.top_k,
+                mode=req.mode,
+                history=req.history,
+            ):
+                yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tell nginx not to buffer
+            "Connection": "keep-alive",
+        },
+    )
+
+
 class HistoryItem(BaseModel):
     ts: str
     query: str
@@ -175,7 +236,7 @@ class HistoryItem(BaseModel):
     intent: Optional[str] = None
     mode: Optional[str] = None
 
-@app.get("/history", response_model=List[HistoryItem])
+@app.get("/history", response_model=List[HistoryItem], dependencies=[Depends(verify_api_key)])
 def get_history(limit: int = 50):
     logs = read_logs(limit=limit)
     items = []
@@ -190,7 +251,7 @@ def get_history(limit: int = 50):
 # -----------------------------------------------------------
 # /upload (Multi-Document Mode)
 # -----------------------------------------------------------
-@app.post("/upload")
+@app.post("/upload", dependencies=[Depends(verify_api_key)])
 async def upload_pdf(
     file: UploadFile = File(...),
     doc_id: str = Form(...),
@@ -272,7 +333,7 @@ async def upload_pdf(
 # -----------------------------------------------------------
 # /documents (List Documents)
 # -----------------------------------------------------------
-@app.get("/documents")
+@app.get("/documents", dependencies=[Depends(verify_api_key)])
 def list_documents():
     docs = []
     if INGESTED_DIR.exists():

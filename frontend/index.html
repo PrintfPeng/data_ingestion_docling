@@ -4,15 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>AI Data Ingestion – Smart Chat</title>
-    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
-  
-    <!-- ✅ DOMPurify (CRITICAL SECURITY FIX) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-  
-    <!-- Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Sarabun:wght@300;400;500;600&display=swap" rel="stylesheet">
-  
     <script>
       tailwind.config = {
         theme: {
@@ -29,89 +23,242 @@
         }
       }
     </script>
-  
-    <link rel="stylesheet" href="css/style.css"> 
+    <link rel="stylesheet" href="css/style.css">
   </head>
-  <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden font-sans selection:bg-brand-100 selection:text-brand-900">
+  <body class="bg-slate-50 text-slate-800 h-screen font-sans selection:bg-brand-100 selection:text-brand-900 overflow-hidden">
 
-  <header class="glass-header border-b border-slate-200 z-30 h-16 flex-none shadow-sm absolute top-0 w-full">
-    <div class="max-w-6xl mx-auto px-4 h-full flex items-center justify-between">
-      
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-indigo-600 flex items-center justify-center text-white shadow-lg">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-          </svg>
+    <!-- ================================================================== -->
+    <!-- LANDING VIEW  (Upload + Documents grid)                              -->
+    <!-- ================================================================== -->
+    <div id="landingView" class="view-container flex flex-col h-full">
+      <header class="glass-header border-b border-slate-200 h-16 flex-none shadow-sm">
+        <div class="max-w-6xl mx-auto px-4 h-full flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-500 to-indigo-600 flex items-center justify-center text-white shadow-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+              </svg>
+            </div>
+            <div>
+              <h1 class="text-lg font-bold text-slate-800 leading-none">AI Ingestion</h1>
+              <p class="text-[10px] text-slate-500 font-medium tracking-wide mt-1">DOCUMENT WORKSPACE</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <a href="logs.html" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm inline-flex items-center gap-2" title="Open Logs page">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              <span class="text-xs font-semibold hidden sm:inline">Logs</span>
+            </a>
+            <button type="button" data-action="open-settings" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm inline-flex items-center gap-2" title="Settings · API Configuration">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+              <span class="text-xs font-semibold hidden sm:inline">Settings</span>
+            </button>
+          </div>
         </div>
-        <div>
-          <h1 class="text-lg font-bold text-slate-800 leading-none">AI Ingestion</h1>
-          <p class="text-[10px] text-slate-500 font-medium tracking-wide mt-1">SMART RAG ASSISTANT</p>
-        </div>
-      </div>
+      </header>
 
-      <div class="flex items-center gap-3">
-        <div class="relative group hidden md:block">
-          <select id="docSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 outline-none cursor-pointer hover:bg-white transition shadow-sm w-40 truncate">
-            <option value="">📚 ค้นหาทุกเอกสาร (All)</option>
-          </select>
+      <main class="flex-1 min-h-0 overflow-y-auto">
+        <div class="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-10">
+
+          <!-- HERO: Upload zone -->
+          <section class="mb-8 md:mb-10">
+            <div class="text-center mb-6">
+              <h2 class="text-2xl md:text-3xl font-bold text-slate-800">อัปโหลดเอกสารใหม่</h2>
+              <p class="text-sm text-slate-500 mt-2">ลากไฟล์ PDF มาที่นี่ หรือคลิกเพื่อเลือก — ระบบจะประมวลผลและเปิดหน้า Chat ให้อัตโนมัติ</p>
+            </div>
+
+            <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="Upload PDF">
+              <div class="drop-zone-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </div>
+              <h3 class="drop-zone-title">คลิกเพื่อเลือกไฟล์ หรือลากมาวาง</h3>
+              <p class="drop-zone-sub">รองรับไฟล์ PDF ภาษาไทย/อังกฤษ · OCR อัตโนมัติผ่าน Gemini Vision</p>
+              <button type="button" class="drop-zone-btn" id="chooseFileBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                เลือกไฟล์ PDF
+              </button>
+              <input id="fileInputLanding" type="file" accept="application/pdf" hidden />
+            </div>
+
+            <div id="landingUploadStatus" class="mt-4 hidden"></div>
+          </section>
+
+          <!-- DOCS LIST -->
+          <section>
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+              <div>
+                <h3 class="text-lg font-bold text-slate-800">เอกสารของคุณ <span class="text-slate-400 font-medium">(<span id="docsCount">0</span>)</span></h3>
+                <p class="text-xs text-slate-500 mt-1">คลิกที่การ์ดเพื่อเปิด Chat</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <input id="landingSearch" type="search" placeholder="ค้นหาชื่อเอกสาร…" class="bg-white border border-slate-200 text-slate-700 text-xs rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-500 shadow-sm w-40 md:w-56 placeholder-slate-400">
+                <button id="refreshDocsBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm" title="Refresh">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div id="landingDocsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+
+            <div id="landingEmpty" class="hidden text-center py-16 text-slate-400 border-2 border-dashed border-slate-200 rounded-2xl mt-4">
+              <div class="text-5xl mb-3">📭</div>
+              <div class="text-sm font-medium">ยังไม่มีเอกสาร</div>
+              <div class="text-xs mt-2">อัปโหลด PDF แรกด้านบนเพื่อเริ่มต้น</div>
+            </div>
+          </section>
+
         </div>
-        <div class="relative group hidden md:block">
-          <select id="modeSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-8 pr-8 py-2 focus:ring-2 focus:ring-brand-500 outline-none cursor-pointer hover:bg-white transition shadow-sm">
-            <option value="auto">Auto Mode</option>
-            <option value="text">Text Only</option>
-            <option value="table">Table Only</option>
-            <option value="both">Both</option>
-          </select>
+      </main>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- CHAT VIEW                                                            -->
+    <!-- ================================================================== -->
+    <div id="chatView" class="view-container hidden h-full flex flex-col">
+      <header class="glass-header border-b border-slate-200 z-30 h-16 flex-none shadow-sm">
+        <div class="max-w-6xl mx-auto px-4 h-full flex items-center justify-between gap-3">
+
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <button id="backToDocsBtn" class="flex-none inline-flex items-center gap-1.5 px-3 py-2 text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm text-xs font-semibold" title="กลับไปที่หน้าเอกสาร">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+              <span class="hidden sm:inline">Documents</span>
+            </button>
+            <div class="flex items-center gap-2 min-w-0">
+              <div class="flex-none w-9 h-9 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center border border-brand-100">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider leading-none">Active Document</div>
+                <div id="activeDocName" class="text-sm font-bold text-slate-800 truncate mt-1" title="">All Documents</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 flex-none">
+            <select id="modeSelect" class="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg pl-3 pr-3 py-2 focus:ring-2 focus:ring-brand-500 outline-none cursor-pointer hover:bg-white transition shadow-sm hidden md:block">
+              <option value="auto">Auto Mode</option>
+              <option value="text">Text Only</option>
+              <option value="table">Table Only</option>
+              <option value="both">Both</option>
+            </select>
+            <a href="logs.html" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm inline-flex" title="Open Logs page">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            </a>
+            <button id="toggleHistoryBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm" title="Toggle history">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </button>
+            <button type="button" data-action="open-settings" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm" title="Settings · API Configuration">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            </button>
+          </div>
+
+          <!-- Hidden selects preserved for app.js logic -->
+          <select id="docSelect" class="hidden" aria-hidden="true"><option value="">All</option></select>
         </div>
-        <button id="toggleHistoryBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-        </button>
+      </header>
+
+      <div class="flex-1 flex overflow-hidden relative">
+        <main class="flex-1 flex flex-col relative min-w-0 bg-slate-50/50">
+          <div id="chatMessages" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth pb-80"></div>
+
+          <div class="glass-input absolute bottom-0 left-0 w-full p-4 md:p-6 z-10">
+            <div class="max-w-4xl mx-auto">
+              <div id="attachmentInfo" class="mb-2 min-h-[24px]"></div>
+              <div class="relative bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 focus-within:ring-2 focus-within:ring-brand-100 transition-all">
+                <textarea id="chatInput" rows="1" class="block w-full py-4 pl-12 pr-14 bg-transparent border-none resize-none focus:ring-0 text-slate-700 placeholder-slate-400 text-sm md:text-base rounded-2xl" placeholder="พิมพ์คำถามของคุณที่นี่..."></textarea>
+                <button id="uploadBtn" class="absolute left-2 bottom-2.5 p-2 text-slate-400 hover:text-brand-600 hover:bg-slate-50 rounded-xl transition">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/></svg>
+                  <input id="fileInput" type="file" accept="application/pdf" class="hidden" />
+                </button>
+                <button id="sendBtn" class="absolute right-2 bottom-2.5 flex items-center justify-center w-9 h-9 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 text-white rounded-xl shadow-md transition-all active:scale-95">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.89 28.89 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z"/></svg>
+                </button>
+              </div>
+
+              <div class="md:hidden flex justify-center mt-3 gap-2">
+                <select id="modeSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-brand-600 rounded-full px-3 py-1 outline-none shadow-sm"><option value="auto">Auto</option><option value="text">Text</option><option value="table">Table</option><option value="both">Both</option></select>
+                <select id="docSelectMobile" class="hidden"><option value="">All</option></select>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <aside id="historyPanel" class="absolute top-0 right-0 h-full w-full sm:w-[360px] bg-white border-l border-slate-200 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-40 flex flex-col">
+          <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div class="flex items-center gap-2 text-slate-700">
+              <div class="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+              <div><h2 class="font-bold text-sm">History</h2><p class="text-[10px] text-slate-400">ประวัติการสนทนาล่าสุด</p></div>
+            </div>
+            <div class="flex gap-1">
+              <button id="refreshHistoryBtn" class="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>
+              <button id="closeHistoryBtn" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>
+            </div>
+          </div>
+          <div id="historyBox" class="flex-1 overflow-y-auto p-4 text-xs space-y-3 bg-white"><p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p></div>
+        </aside>
       </div>
     </div>
-  </header>
 
-  <div class="flex-1 flex overflow-hidden relative pt-16">
-    <main class="flex-1 flex flex-col relative min-w-0 bg-slate-50/50">
-      
-      <div id="chatMessages" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth pb-80"></div>
+    <!-- ================================================================== -->
+    <!-- SETTINGS MODAL (API Configuration)                                   -->
+    <!-- ================================================================== -->
+    <div id="settingsModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+      <div class="modal-card" role="document">
+        <div class="modal-header">
+          <div class="modal-icon">
+            <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+            </svg>
+          </div>
+          <div class="modal-title-group">
+            <h2 id="settingsModalTitle">API Configuration</h2>
+            <p>ตั้งค่า API Key สำหรับเรียก backend / vendor API</p>
+          </div>
+          <button id="modalCloseBtn" class="modal-x" type="button" aria-label="Close">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
 
-      <div class="glass-input absolute bottom-0 left-0 w-full p-4 md:p-6 z-10">
-        <div class="max-w-4xl mx-auto">
-          <div id="attachmentInfo" class="mb-2 min-h-[24px]"></div>
-          <div class="relative bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 focus-within:ring-2 focus-within:ring-brand-100 transition-all">
-            <textarea id="chatInput" rows="1" class="block w-full py-4 pl-12 pr-14 bg-transparent border-none resize-none focus:ring-0 text-slate-700 placeholder-slate-400 text-sm md:text-base rounded-2xl" placeholder="พิมพ์คำถามของคุณที่นี่..."></textarea>
-            <button id="uploadBtn" class="absolute left-2 bottom-2.5 p-2 text-slate-400 hover:text-brand-600 hover:bg-slate-50 rounded-xl transition">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" /></svg>
-              <input id="fileInput" type="file" accept="application/pdf" class="hidden" />
-            </button>
-            <button id="sendBtn" class="absolute right-2 bottom-2.5 flex items-center justify-center w-9 h-9 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 text-white rounded-xl shadow-md transition-all active:scale-95">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.89 28.89 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" /></svg>
+        <div class="modal-body">
+          <label for="apiKeyInput">API Key</label>
+          <div class="input-with-toggle">
+            <input id="apiKeyInput" type="password" placeholder="sk-... หรือ Bearer token" autocomplete="off" spellcheck="false">
+            <button id="toggleVisibilityBtn" type="button" aria-label="Show/Hide" title="Show/Hide">
+              <svg id="eyeShow" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg id="eyeHide" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden">
+                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
             </button>
           </div>
-          
-          <div class="md:hidden flex justify-center mt-3 gap-2">
-            <select id="docSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-slate-600 rounded-full px-3 py-1 outline-none shadow-sm max-w-[150px] truncate"><option value="">📚 All Docs</option></select>
-            <select id="modeSelectMobile" class="bg-white/80 backdrop-blur border border-slate-200 text-[11px] font-bold text-brand-600 rounded-full px-3 py-1 outline-none shadow-sm"><option value="auto">Auto</option><option value="text">Text</option><option value="table">Table</option><option value="both">Both</option></select>
-          </div>
+          <p class="input-hint">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            เก็บใน <code>localStorage</code> เฉพาะเบราว์เซอร์นี้เท่านั้น · ไม่ถูกส่งไปที่ server จนกว่าคุณจะเรียกใช้
+          </p>
+        </div>
+
+        <div class="modal-footer">
+          <button id="cancelSettingsBtn" type="button" class="btn-cancel">Cancel</button>
+          <button id="saveSettingsBtn" type="button" class="btn-save">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save API Key
+          </button>
         </div>
       </div>
-    </main>
+    </div>
 
-    <aside id="historyPanel" class="absolute top-0 right-0 h-full w-full sm:w-[360px] bg-white border-l border-slate-200 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-40 flex flex-col pt-16">
-      <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-        <div class="flex items-center gap-2 text-slate-700">
-          <div class="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
-          <div><h2 class="font-bold text-sm">History</h2><p class="text-[10px] text-slate-400">ประวัติการสนทนาล่าสุด</p></div>
-        </div>
-        <div class="flex gap-1">
-          <button id="refreshHistoryBtn" class="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg></button>
-          <button id="closeHistoryBtn" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
-        </div>
-      </div>
-      <div id="historyBox" class="flex-1 overflow-y-auto p-4 text-xs space-y-3 bg-white"><p class="text-center text-slate-400 mt-10">... ยังไม่มีประวัติ ...</p></div>
-    </aside>
-  </div>
+    <!-- Toast notifications -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="js/app.js"></script>
-</body>
+    <script src="js/app.js"></script>
+  </body>
 </html>

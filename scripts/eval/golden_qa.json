@@ -1,0 +1,146 @@
+[
+  {
+    "id": "q1_name",
+    "question": "ผู้รับจ้างชื่ออะไร",
+    "ground_truth": "นายอมรเทพ มุขยวัฒน์",
+    "expected_keywords": ["อมรเทพ", "มุขยวัฒน์"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q2_id_number",
+    "question": "เลขประจำตัวประชาชนของผู้รับจ้างคือเลขอะไร",
+    "ground_truth": "1 9098 00966 49 8",
+    "expected_keywords": ["1", "9098", "00966", "49", "8"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q3_installment5",
+    "question": "งวดที่ห้าจ่ายเงินจำนวนเท่าไหร่",
+    "ground_truth": "15,000 บาท (หนึ่งหมื่นห้าพันบาทถ้วน)",
+    "expected_keywords": ["15,000", "หนึ่งหมื่นห้าพัน"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q4_university",
+    "question": "เอกสารสัญญาทำที่มหาวิทยาลัยใด",
+    "ground_truth": "มหาวิทยาลัยราชภัฏยะลา",
+    "expected_keywords": ["ราชภัฏยะลา"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q5_cancel_days",
+    "question": "หากผู้รับจ้างต้องการยกเลิกสัญญาต้องแจ้งล่วงหน้ากี่วันทำการ",
+    "ground_truth": "ไม่น้อยกว่า 7 วันทำการ",
+    "expected_keywords": ["7", "วันทำการ"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q6_memo_number",
+    "question": "บันทึกเลขที่อะไร",
+    "ground_truth": "บันทึกเลขที่ บ.โ๒๕๓/๒๕๖๙",
+    "expected_keywords": ["บ.โ", "๒๕๓", "๒๕๖๙"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q7_signing_date",
+    "question": "สัญญาลงนามเมื่อวันที่เท่าใด",
+    "ground_truth": "วันที่ 16 เมษายน พ.ศ. 2569",
+    "expected_keywords": ["๑๖", "เมษายน", "๒๕๖๙"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q8_position",
+    "question": "ตำแหน่งที่จ้างเหมาคืออะไร",
+    "ground_truth": "เจ้าหน้าที่ประสานงานโครงการพัฒนาสมรรถนะครูและบุคลากรทางการศึกษาเพื่อศตวรรษที่ 21",
+    "expected_keywords": ["ประสานงาน", "สมรรถนะครู", "ศตวรรษที่"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q9_director",
+    "question": "ผู้อำนวยการสถาบันวิจัยและพัฒนาชายแดนภาคใต้ชื่ออะไร",
+    "ground_truth": "รองศาสตราจารย์ ดร.ชินีเพ็ญ มะลิสุวรรณ",
+    "expected_keywords": ["ชินีเพ็ญ", "มะลิสุวรรณ"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q10_report_org",
+    "question": "รายงานสรุปโครงการบริการวิชาการครู จัดโดยหน่วยงานใด",
+    "ground_truth": "ศูนย์ปัญญาประดิษฐ์ มหาวิทยาลัยราชภัฏยะลา",
+    "expected_keywords": ["ศูนย์ปัญญาประดิษฐ์", "ราชภัฏยะลา"],
+    "expected_doc_ids": ["รายงานสรุปโครงการบริการวิชาการครู_ศูนย์ai"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q11_provinces",
+    "question": "โครงการพัฒนาสมรรถนะครูฯ ดำเนินการในพื้นที่จังหวัดใดบ้าง",
+    "ground_truth": "3 จังหวัดชายแดนใต้: ปัตตานี ยะลา นราธิวาส",
+    "expected_keywords": ["ปัตตานี", "ยะลา", "นราธิวาส"],
+    "expected_doc_ids": ["รายงานสรุปโครงการบริการวิชาการครู_ศูนย์ai"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q12_training_date",
+    "question": "การอบรม AI ตามรายงานสรุปโครงการจัดวันไหน",
+    "ground_truth": "ระหว่างวันที่ 12-13 มีนาคม 2569",
+    "expected_keywords": ["12", "13", "มีนาคม", "2569"],
+    "expected_doc_ids": ["รายงานสรุปโครงการบริการวิชาการครู_ศูนย์ai"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q13_scoring_criteria",
+    "question": "เกณฑ์การประเมินความคิดสร้างสรรค์และการเล่าเรื่องได้กี่คะแนน",
+    "ground_truth": "15 คะแนน",
+    "expected_keywords": ["15"],
+    "expected_doc_ids": ["หลักเกณฑ์การประกวดคลิปวิดีโอประชาสัมพัน"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q14_ai_prohibited",
+    "question": "การประกวดคลิป AI ห้ามใช้ AI สร้างอะไรบ้าง",
+    "ground_truth": "ห้ามสร้างข้อมูลเท็จ สถิติเท็จ เหตุการณ์เท็จ หรือบิดเบือนข้อเท็จจริง ห้ามสร้าง Deepfake ของบุคคลจริงโดยไม่ได้รับอนุญาต",
+    "expected_keywords": ["เท็จ", "Deepfake"],
+    "expected_doc_ids": ["หลักเกณฑ์การประกวดคลิปวิดีโอประชาสัมพัน"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q15_video_types",
+    "question": "ประเภทผลงานวิดีโอที่ส่งเข้าประกวดมีกี่ประเภท และมีอะไรบ้าง",
+    "ground_truth": "3 ประเภท: (5.1) วิดีโอประชาสัมพันธ์ผลงานเด่น (5.2) วิดีโอสรุปผลการดำเนินงาน (5.3) วิดีโอเล่าเรื่องชุมชนและอัตลักษณ์ท้องถิ่น",
+    "expected_keywords": ["3", "ผลงานเด่น", "ชุมชน"],
+    "expected_doc_ids": ["หลักเกณฑ์การประกวดคลิปวิดีโอประชาสัมพัน"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q16_online_training_date",
+    "question": "การอบรมออนไลน์ Inspire the Future with AI จัดวันที่เท่าไหร่",
+    "ground_truth": "วันพฤหัสบดีที่ 18 มิถุนายน 2569",
+    "expected_keywords": ["18", "มิถุนายน", "2569"],
+    "expected_doc_ids": ["อบรม_online_inspire_the_future_with_ai___technology_และการเตรียมความพร้"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q17_registration_period",
+    "question": "โครงการ Coding & AI Competition เปิดรับสมัครระหว่างวันที่เท่าไหร่ถึงเท่าไหร่",
+    "ground_truth": "11 มีนาคม ถึง 25 เมษายน 2569",
+    "expected_keywords": ["11", "มี.ค", "25", "เม.ย"],
+    "expected_doc_ids": ["อบรม_online_inspire_the_future_with_ai___technology_และการเตรียมความพร้"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q18_cross_doc_theme",
+    "question": "โครงการอะไรที่ปรากฏทั้งในสัญญาจ้างและในรายงานสรุปโครงการ",
+    "ground_truth": "โครงการพัฒนาสมรรถนะครูและบุคลากรทางการศึกษาเพื่อศตวรรษที่ 21",
+    "expected_keywords": ["สมรรถนะครู", "ศตวรรษที่", "21"],
+    "expected_doc_ids": ["สัญญาจ้าง_นายอมรเทพ", "รายงานสรุปโครงการบริการวิชาการครู_ศูนย์ai"],
+    "difficulty": "hard"
+  }
+]

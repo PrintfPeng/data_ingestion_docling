@@ -20,6 +20,11 @@ from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
     TableStructureOptions,
 )
+try:
+    from docling.datamodel.pipeline_options import AcceleratorOptions, AcceleratorDevice
+    _HAS_ACCEL_OPTS = True
+except Exception:
+    _HAS_ACCEL_OPTS = False
 
 # Project Schema
 from .schema import (
@@ -29,6 +34,12 @@ from .schema import (
     DocumentMetadata,
     ImageBlock,
 )
+
+# OpenRouter Vision OCR (fallback สำหรับ PDF ที่ text layer พัง / scanned)
+try:
+    from .openrouter_ocr import OpenRouterVisionOCR
+except Exception:  # pragma: no cover
+    OpenRouterVisionOCR = None
 
 
 
@@ -42,7 +53,8 @@ class DoclingParser:
         self.config = config
 
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = True
+        # Skip Docling's built-in OCR when OpenRouter Vision OCR will replace text
+        pipeline_options.do_ocr = not bool(os.getenv("VISION_API_KEY"))
         pipeline_options.do_table_structure = True
         pipeline_options.table_structure_options = TableStructureOptions(
             do_cell_matching=True
@@ -50,6 +62,18 @@ class DoclingParser:
         pipeline_options.generate_page_images = True
         pipeline_options.images_scale = 3.0
         self.image_scale = 3.0
+
+        # GPU acceleration for Docling layout/table models when available
+        if _HAS_ACCEL_OPTS:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    pipeline_options.accelerator_options = AcceleratorOptions(
+                        num_threads=4, device=AcceleratorDevice.CUDA
+                    )
+                    logger.info("[docling] AcceleratorOptions: CUDA enabled")
+            except Exception as e:
+                logger.warning(f"[docling] could not enable CUDA accelerator: {e}")
 
         self.converter = DocumentConverter(
             format_options={
@@ -89,6 +113,39 @@ class DoclingParser:
             doc_id = Path(file_path).stem
 
             text_blocks = self._process_text(doc, doc_id)
+
+            # -------- OpenRouter Vision OCR override (whole-page) --------
+            # If enabled via env, OCR overrides Docling's text layer
+            # (needed for scanned PDFs / broken Thai font mappings).
+            # Hybrid A+B was tested but regressed (-3.9% judge); reverted.
+            if os.getenv("VISION_API_KEY") and OpenRouterVisionOCR is not None:
+                try:
+                    logger.info("VISION_API_KEY detected → running OpenRouter OCR")
+                    ocr = OpenRouterVisionOCR()
+                    ocr_pages = ocr.ocr_pdf(file_path)
+                    ocr_blocks: List[TextBlock] = []
+                    for page in ocr_pages:
+                        if not page.get("content", "").strip():
+                            continue
+                        ocr_blocks.append(
+                            TextBlock(
+                                id=f"ocr_{page['page']}",
+                                doc_id=doc_id,
+                                content=page["content"],
+                                page=page["page"],
+                                bbox=None,
+                                extra={"role": "ocr", "source": "openrouter_vision"},
+                            )
+                        )
+                    if ocr_blocks:
+                        logger.info(
+                            f"OCR produced {len(ocr_blocks)} blocks — replacing Docling text ({len(text_blocks)} blocks)"
+                        )
+                        text_blocks = ocr_blocks
+                    else:
+                        logger.warning("OCR returned no text — keeping Docling text")
+                except Exception as e:
+                    logger.error(f"OpenRouter OCR failed, falling back to Docling text: {e}")
 
             # Prepare output dir
             output_dir = None

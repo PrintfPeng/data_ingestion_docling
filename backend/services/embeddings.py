@@ -13,7 +13,9 @@ from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # [CHANGE] ใช้โมเดล Embeddings จริงๆ (Multilingual) แทน Chat Model
-_EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-large" 
+# BAAI/bge-m3: top-tier multilingual, supports dense + sparse + multi-vector
+# env EMBEDDING_MODEL_NAME overrides (e.g., intfloat/multilingual-e5-large)
+_EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
 # หรือถ้าเครื่องช้าใช้: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 # เก็บ client แบบ singleton
@@ -42,9 +44,19 @@ def get_embedding_client() -> HuggingFaceEmbeddings:
     if _embeddings_client is None:
         print(f"⏳ Loading Local Embedding Model: {_EMBEDDING_MODEL_NAME} ...")
         # [CHANGE] สร้าง Client แบบ Local HuggingFace
+        # Prefer GPU if available; env EMBED_DEVICE overrides (cpu/cuda/cuda:0)
+        import os
+        device = os.getenv("EMBED_DEVICE", "").strip()
+        if not device:
+            try:
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
+        print(f"⏳ Loading Local Embedding Model: {_EMBEDDING_MODEL_NAME} on device={device}...")
         _embeddings_client = HuggingFaceEmbeddings(
             model_name=_EMBEDDING_MODEL_NAME,
-            model_kwargs={'device': 'cpu'}, # เปลี่ยนเป็น 'cuda' ถ้ามี GPU
+            model_kwargs={'device': device},
             encode_kwargs={'normalize_embeddings': True}
         )
 

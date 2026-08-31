@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logs · AI Ingestion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Sarabun:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: { sans: ['Sarabun', 'Inter', 'sans-serif'] },
+            colors: {
+              brand: {
+                50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc',
+                400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7',
+                700: '#0369a1', 800: '#075985', 900: '#0c4a6e'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+  </head>
+  <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden font-sans">
+
+    <header class="glass-header border-b border-slate-200 h-16 flex-none shadow-sm">
+      <div class="max-w-6xl mx-auto px-4 h-full flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <a href="index.html" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm inline-flex items-center gap-2" title="Back to Chat">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+            <span class="text-xs font-semibold">Chat</span>
+          </a>
+          <div class="flex items-center gap-3 ml-2">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-slate-700 to-slate-900 flex items-center justify-center text-white shadow-lg">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            </div>
+            <div>
+              <h1 class="text-lg font-bold text-slate-800 leading-none">Logs</h1>
+              <p class="text-[10px] text-slate-500 font-medium tracking-wide mt-1">SYSTEM · Q&amp;A EVENTS</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <label class="inline-flex items-center gap-2 text-xs text-slate-500 font-medium cursor-pointer select-none">
+            <input id="autoRefreshChk" type="checkbox" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" checked>
+            Auto-refresh
+          </label>
+          <select id="filterLevel" class="bg-white border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg px-2 py-1.5 outline-none focus:ring-2 focus:ring-brand-500 shadow-sm">
+            <option value="all">All levels</option>
+            <option value="info">Info</option>
+            <option value="success">Success</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+          </select>
+          <button id="refreshBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-brand-50 hover:text-brand-600 transition shadow-sm" title="Refresh now">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+          <button id="clearBtn" class="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-red-50 hover:text-red-500 transition shadow-sm" title="Clear view">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M8 7V4a2 2 0 012-2h4a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="panel-toolbar dark flex-none border-t border-slate-900">
+      <span>
+        <span id="statusLabel">● connecting…</span>
+        <span class="ml-3 text-slate-500">Source: /history · <span id="countLabel">0</span> entries</span>
+      </span>
+      <button id="scrollBottomBtn" title="Jump to newest">↓ Latest</button>
+    </div>
+
+    <main class="flex-1 min-h-0 flex flex-col">
+      <div id="logTerminal" class="log-terminal" aria-live="polite">
+        <div class="log-line log-info"><span class="log-time">--:--:--</span><span class="log-tag">INFO</span><span class="log-text">Loading logs…</span></div>
+      </div>
+    </main>
+
+    <script src="js/logs.js"></script>
+  </body>
+</html>

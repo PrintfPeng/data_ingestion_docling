@@ -20,6 +20,7 @@ google-generativeai
 sentence-transformers
 chromadb
 litellm
+rank-bm25
 # --- PDF & Image Processing ---
 pymupdf
 camelot-py

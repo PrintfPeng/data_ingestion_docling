@@ -141,6 +141,15 @@ def index_chunks(
     if not chunks:
         return
 
+    # Contextual chunking: prepend doc-level summary to each chunk before
+    # embedding, so retrieval can distinguish e.g. "training date" vs
+    # "registration date" vs "announcement date" chunks in the same doc.
+    try:
+        from .contextual_chunker import augment_chunks_with_context
+        chunks = augment_chunks_with_context(chunks)
+    except Exception as e:
+        logger.warning(f"[vector_store] contextual chunking skipped: {e}")
+
     vectordb = get_vector_store(persist_directory, collection_name)
     texts = [c.content for c in chunks]
     
@@ -162,11 +171,18 @@ def index_chunks(
         vectordb.add_texts(texts=texts, metadatas=metadatas, ids=ids)
         try:
             vectordb.persist()
-        except Exception: 
+        except Exception:
             pass
     except Exception as e:
         logger.exception("[vector_store] Indexing error: %s", e)
         raise HTTPException(status_code=500, detail=f"Indexing error: {e}") from e
+
+    # Invalidate hybrid-search BM25 cache so it rebuilds with the new chunks
+    try:
+        from .hybrid_search import invalidate_bm25
+        invalidate_bm25()
+    except Exception:
+        pass
 
 
 # -----------------------------------------------------------

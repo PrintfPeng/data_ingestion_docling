@@ -17,6 +17,26 @@ const docSelect = document.getElementById("docSelect");
 const modeSelectMobile = document.getElementById("modeSelectMobile");
 const docSelectMobile = document.getElementById("docSelectMobile");
 
+// --- SPA views ---
+const landingView       = document.getElementById("landingView");
+const chatView          = document.getElementById("chatView");
+const backToDocsBtn     = document.getElementById("backToDocsBtn");
+const activeDocNameEl   = document.getElementById("activeDocName");
+
+// --- Landing view: upload + docs grid ---
+const dropZone          = document.getElementById("dropZone");
+const fileInputLanding  = document.getElementById("fileInputLanding");
+const chooseFileBtn     = document.getElementById("chooseFileBtn");
+const landingDocsGrid   = document.getElementById("landingDocsGrid");
+const landingEmpty      = document.getElementById("landingEmpty");
+const landingSearch     = document.getElementById("landingSearch");
+const refreshDocsBtn    = document.getElementById("refreshDocsBtn");
+const docsCountEl       = document.getElementById("docsCount");
+const landingUploadStatus = document.getElementById("landingUploadStatus");
+
+let landingDocs = [];   // last fetched documents
+let activeDocId = "";    // currently selected doc in chat view
+
 let historyVisible = false;
 let attachedFile = null;
 // [NEW] เก็บประวัติการสนทนาสำหรับส่งไปให้ Bot จำบริบท
@@ -74,6 +94,154 @@ function hideHistoryPanel() {
     historyPanel.classList.add("translate-x-full"); 
 }
 
+// =======================
+// 🎬 SPA view switching + Landing logic
+// =======================
+function escapeHtml(s) {
+    return String(s).replace(/[<>&"']/g, c => ({
+        '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+function showLandingView() {
+    chatView.classList.add("hidden");
+    landingView.classList.remove("hidden");
+    hideHistoryPanel();
+    // Refresh docs list every time we return to landing
+    fetchDocuments();
+}
+
+function showChatView(docId, docName) {
+    activeDocId = docId || "";
+    if (activeDocNameEl) {
+        activeDocNameEl.textContent = docName || (docId || "All Documents");
+        activeDocNameEl.title = docName || (docId || "All Documents");
+    }
+    // Sync doc selector for existing chat logic
+    if (docSelect)       docSelect.value = activeDocId;
+    if (docSelectMobile) docSelectMobile.value = activeDocId;
+
+    landingView.classList.add("hidden");
+    chatView.classList.remove("hidden");
+    // Focus input so user can start typing
+    setTimeout(() => chatInput && chatInput.focus(), 100);
+}
+
+// -----------------------------------------------------------------
+// Landing: render document cards
+// -----------------------------------------------------------------
+function renderLandingDocs(docs) {
+    landingDocsGrid.innerHTML = "";
+    if (!docs.length) {
+        landingEmpty.classList.remove("hidden");
+        return;
+    }
+    landingEmpty.classList.add("hidden");
+
+    docs.forEach(doc => {
+        const name = doc.name || doc.id || "Untitled";
+        const id = doc.id || "";
+        const pages = doc.pages != null ? `${doc.pages} หน้า` : "";
+        const chunks = doc.chunks != null ? `${doc.chunks} chunks` : "";
+        const status = (doc.status || "ready").toLowerCase();
+        const statusLabel = { ready: "READY", processing: "PROCESSING", error: "ERROR" }[status] || status.toUpperCase();
+
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "doc-card";
+        card.setAttribute("data-doc-id", id);
+        card.innerHTML = `
+            <div class="doc-card-header">
+                <div class="doc-card-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="9" y1="13" x2="15" y2="13"/>
+                        <line x1="9" y1="17" x2="15" y2="17"/>
+                    </svg>
+                </div>
+                <div class="doc-card-info">
+                    <div class="doc-card-name">${escapeHtml(name)}</div>
+                    <div class="doc-card-id">${escapeHtml(id)}</div>
+                </div>
+            </div>
+            <div class="doc-card-meta">
+                <span class="ingested-status status-${status}">${statusLabel}</span>
+                ${pages  ? `<span>📄 ${escapeHtml(pages)}</span>`  : ""}
+                ${chunks ? `<span>🧩 ${escapeHtml(chunks)}</span>` : ""}
+            </div>
+            <div class="doc-card-cta">
+                💬 เปิด Chat กับเอกสารนี้
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+        `;
+        card.addEventListener("click", () => showChatView(id, name));
+        landingDocsGrid.appendChild(card);
+    });
+}
+
+function applyLandingFilter() {
+    const q = (landingSearch?.value || "").trim().toLowerCase();
+    const filtered = q
+        ? landingDocs.filter(d => (d.name || "").toLowerCase().includes(q) || (d.id || "").toLowerCase().includes(q))
+        : landingDocs;
+    renderLandingDocs(filtered);
+}
+
+// -----------------------------------------------------------------
+// Landing: upload zone
+// -----------------------------------------------------------------
+function setUploadStatus(message, level = "info", withSpinner = false) {
+    if (!landingUploadStatus) return;
+    landingUploadStatus.classList.remove("hidden");
+    landingUploadStatus.innerHTML = `
+        <div class="upload-status ${level}">
+            ${withSpinner ? '<span class="spinner"></span>' : ''}
+            <span>${escapeHtml(message)}</span>
+        </div>
+    `;
+}
+
+function clearUploadStatus() {
+    if (!landingUploadStatus) return;
+    landingUploadStatus.classList.add("hidden");
+    landingUploadStatus.innerHTML = "";
+}
+
+/**
+ * handleFileUpload(file)
+ * Placeholder connect point — currently wires to existing /upload endpoint.
+ * Replace body to hook a different backend if needed.
+ */
+async function handleFileUpload(file) {
+    if (!file) return;
+
+    const defaultDocId = file.name.replace(/\.[^.]+$/, "");
+    const docId = (prompt("ตั้งชื่อ Doc ID:", defaultDocId) || defaultDocId).trim();
+    if (!docId) return;
+
+    dropZone.classList.add("uploading");
+    setUploadStatus(`กำลังอัปโหลด "${file.name}" (${Math.round(file.size / 1024)} KB) · OCR อาจใช้เวลาสักครู่…`, "info", true);
+
+    try {
+        const res = await uploadFileToBackend(file, docId);
+        setUploadStatus(`อัปโหลดสำเร็จ! ${res.page_count || "?"} หน้า · เปิด Chat ให้อัตโนมัติ`, "success");
+
+        // Refresh docs then jump into chat with the new doc active
+        await fetchDocuments();
+        setTimeout(() => {
+            showChatView(docId, docId);
+            clearUploadStatus();
+        }, 800);
+    } catch (err) {
+        console.error(err);
+        setUploadStatus(`อัปโหลดไม่สำเร็จ: ${err.message}`, "error");
+    } finally {
+        dropZone.classList.remove("uploading");
+        if (fileInputLanding) fileInputLanding.value = "";
+    }
+}
+
 function renderAttachment() {
     if (!attachedFile) { attachmentInfo.innerHTML = ""; return; }
     attachmentInfo.innerHTML = `
@@ -95,7 +263,8 @@ function renderAttachment() {
 // [FIX 1] ปรับปรุง fetchDocuments ให้ใช้ Object {id, name} จาก Backend
 async function fetchDocuments() {
     try {
-        const res = await fetch("/documents");
+        const res = await fetch("/documents", { headers: { ...getAuthHeader() } });
+        if (handleAuthResponse(res)) return;
         if (!res.ok) return;
         const data = await res.json();
         const docs = data.documents || [];
@@ -110,11 +279,16 @@ async function fetchDocuments() {
                 opt.text = `📄 ${doc.name}`;  // ใช้ name แสดงใน Dropdown
                 sel.add(opt);
             });
-            
+
             // คงค่าเดิมที่เลือกไว้ (ถ้ายังมีอยู่)
             const optionExists = Array.from(sel.options).some(o => o.value === currentVal);
             if (optionExists && currentVal) sel.value = currentVal;
         });
+
+        // Sync landing view grid
+        landingDocs = docs;
+        if (docsCountEl) docsCountEl.textContent = docs.length;
+        applyLandingFilter();
     } catch (e) {
         console.error("Failed to load documents:", e);
     }
@@ -343,7 +517,15 @@ async function uploadFileToBackend(file, docId) {
     formData.append("file", file);
     formData.append("doc_id", docId);
     formData.append("doc_type", "");
-    const res = await fetch("/upload", { method: "POST", body: formData });
+    const res = await fetch("/upload", {
+        method: "POST",
+        headers: { ...getAuthHeader() },
+        body: formData,
+    });
+    if (res.status === 401 || res.status === 403) {
+        handleAuthResponse(res);
+        throw new Error(res.status === 401 ? "ยังไม่ได้ตั้งค่า API key" : "API key ไม่ถูกต้อง");
+    }
     if (!res.ok) throw new Error(await res.text());
     return await res.json();
 }
@@ -369,12 +551,12 @@ async function sendMessage() {
         try {
             const defaultDocId = fileToUpload.name.replace(/\.[^.]+$/, "");
             const docId = prompt("ตั้งชื่อ Doc ID:", defaultDocId) || defaultDocId;
-            
+
             appendMessage("assistant", `⏳ กำลังอัปโหลด... (ID: ${docId})`, { label: "System" });
             const res = await uploadFileToBackend(fileToUpload, docId);
-            
+
             appendMessage("assistant", `✅ อัปโหลดสำเร็จ! Pages: ${res.page_count}`, { label: "System" });
-            
+
             // รีเฟรชเอกสารเพื่อให้ ID ใหม่ปรากฏใน Dropdown
             await fetchDocuments();
         } catch (err) {
@@ -407,38 +589,17 @@ async function sendMessage() {
         
         scrollToBottom();
 
-        try {
-            // [NEW] เตรียม History ส่งไป Backend (ตัดข้อความล่าสุดของ User ที่เพิ่งพิมพ์ไปออก เพราะเดี๋ยว Backend จะเอาไปรวมเอง หรือรวมไปเลยก็ได้ แต่ปกติตัดออกดีกว่าถ้า Backend รับ query แยก)
-            // ในที่นี้ Backend รับ query แยก ดังนั้นส่ง history ก่อนหน้านั้นไป
-            const historyToSend = chatHistory.slice(0, -1);
+        const historyToSend = chatHistory.slice(0, -1);
+        const payload = {
+            query: text,
+            doc_ids: selectedDocId ? [selectedDocId] : null,
+            top_k: 20,
+            mode: mode,
+            history: historyToSend,
+        };
 
-            // [FIX 4] ตรวจสอบ selectedDocId ก่อนส่ง (ถ้าเป็น "" คือเลือก All ให้ส่ง null)
-            const payload = { 
-                query: text, 
-                doc_ids: selectedDocId ? [selectedDocId] : null, 
-                top_k: 20, 
-                mode: mode,
-                history: historyToSend // [NEW] ส่งประวัติไปด้วย
-            };
-            
-            const res = await fetch("/ask", { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify(payload) 
-            });
-            
-            if (!res.ok) throw new Error("API Error: " + res.status);
-            const data = await res.json();
-            
-            const loadingEl = document.getElementById(loadingId);
-            if(loadingEl) loadingEl.remove();
-            
-            appendMessage("assistant", data.answer || "(ไม่พบคำตอบ)", { 
-                intent: data.intent, 
-                sources: data.sources || [],
-                tables: data.tables || []
-            });
-            
+        try {
+            await streamAskAndRender(payload, loadingId);
         } catch (err) {
             const loadingEl = document.getElementById(loadingId);
             if(loadingEl) loadingEl.remove();
@@ -447,10 +608,103 @@ async function sendMessage() {
     }
 }
 
+/**
+ * streamAskAndRender — POST /ask/stream, parse SSE, render tokens live.
+ * Removes the loading spinner as soon as the first token arrives.
+ */
+async function streamAskAndRender(payload, loadingId) {
+    const res = await fetch("/ask/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify(payload),
+    });
+    if (handleAuthResponse(res)) throw new Error("Auth required");
+    if (!res.ok) throw new Error("API Error: " + res.status);
+
+    // Live streaming bubble
+    const wrapper = document.createElement("div");
+    wrapper.className = "flex w-full mb-6 justify-start msg-animate";
+    const avatar = document.createElement("div");
+    avatar.className = "flex-none w-8 h-8 rounded-full bg-white border border-slate-200 text-brand-600 flex items-center justify-center mr-3 shadow-sm";
+    avatar.innerHTML = '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>';
+    const bubble = document.createElement("div");
+    bubble.className = "relative max-w-[85%] md:max-w-[75%] px-5 py-3.5 text-sm leading-relaxed shadow-sm bg-white border border-slate-100 text-slate-700 rounded-2xl rounded-tl-sm";
+    const textContainer = document.createElement("div");
+    textContainer.className = "whitespace-pre-wrap font-sans prose prose-sm max-w-none answer-text-content stream-cursor";
+    bubble.appendChild(textContainer);
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(bubble);
+
+    const dummy = document.getElementById("scrollDummy");
+    if (dummy) chatMessages.insertBefore(wrapper, dummy);
+    else chatMessages.appendChild(wrapper);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let accumulated = "";
+    let sources = [];
+    let intent = "rag_query";
+    let firstTokenSeen = false;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+        for (const raw of events) {
+            const evt = parseSSE(raw);
+            if (!evt) continue;
+            if (evt.event === "sources") {
+                sources = evt.payload.sources || [];
+            } else if (evt.event === "token") {
+                if (!firstTokenSeen) {
+                    firstTokenSeen = true;
+                    const loadingEl = document.getElementById(loadingId);
+                    if (loadingEl) loadingEl.remove();
+                }
+                accumulated += evt.payload.text || "";
+                textContainer.textContent = accumulated;
+                scrollToBottom();
+            } else if (evt.event === "done") {
+                intent = evt.payload.intent || intent;
+            } else if (evt.event === "error") {
+                throw new Error(evt.payload.message || "stream error");
+            }
+        }
+    }
+
+    // Finalize: remove streaming bubble, render properly with tables + sources
+    wrapper.remove();
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) loadingEl.remove();
+    appendMessage("assistant", accumulated || "(ไม่พบคำตอบ)", {
+        intent,
+        sources,
+        tables: [],
+    });
+}
+
+function parseSSE(raw) {
+    let event = "message", data = "";
+    for (const line of raw.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+    }
+    if (!data) return null;
+    try {
+        return { event, payload: JSON.parse(data) };
+    } catch {
+        return { event, payload: { raw: data } };
+    }
+}
+
 async function loadHistory() {
     historyBox.innerHTML = '<div class="flex justify-center py-10"><div class="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div></div>';
     try {
-        const res = await fetch(`/history?limit=50`);
+        const res = await fetch(`/history?limit=50`, { headers: { ...getAuthHeader() } });
+        if (handleAuthResponse(res)) throw new Error("Auth required");
         if (!res.ok) throw new Error("Load failed");
         
         let data = await res.json();
@@ -518,8 +772,237 @@ if (closeHistoryBtn) {
     });
 }
 
+// =======================
+// 🎬 Landing view event wiring
+// =======================
+if (dropZone && fileInputLanding) {
+    // Click / keyboard to open picker
+    dropZone.addEventListener("click", (e) => {
+        // Avoid double-fire when the inner button is clicked
+        if (e.target.closest && e.target.closest(".drop-zone-btn")) return;
+        fileInputLanding.click();
+    });
+    dropZone.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            fileInputLanding.click();
+        }
+    });
+    if (chooseFileBtn) {
+        chooseFileBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            fileInputLanding.click();
+        });
+    }
+    // Drag & drop
+    ["dragenter", "dragover"].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add("drag-over");
+        });
+    });
+    ["dragleave", "drop"].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove("drag-over");
+        });
+    });
+    dropZone.addEventListener("drop", (e) => {
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file) handleFileUpload(file);
+    });
+    fileInputLanding.addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) handleFileUpload(file);
+    });
+}
+
+if (landingSearch) {
+    landingSearch.addEventListener("input", applyLandingFilter);
+}
+if (refreshDocsBtn) {
+    refreshDocsBtn.addEventListener("click", fetchDocuments);
+}
+if (backToDocsBtn) {
+    backToDocsBtn.addEventListener("click", showLandingView);
+}
+
+// =======================
+// ⚙️ Settings modal (API Key configuration)
+// =======================
+const API_KEY_STORAGE = "app_api_key";
+const settingsModal      = document.getElementById("settingsModal");
+const apiKeyInput        = document.getElementById("apiKeyInput");
+const toggleVisibilityBtn = document.getElementById("toggleVisibilityBtn");
+const saveSettingsBtn    = document.getElementById("saveSettingsBtn");
+const cancelSettingsBtn  = document.getElementById("cancelSettingsBtn");
+const modalCloseBtn      = document.getElementById("modalCloseBtn");
+const eyeShow            = document.getElementById("eyeShow");
+const eyeHide            = document.getElementById("eyeHide");
+const toastEl            = document.getElementById("toast");
+
+function openSettingsModal() {
+    if (!settingsModal) return;
+    // Load existing key (if any) into the input
+    const saved = localStorage.getItem(API_KEY_STORAGE) || "";
+    apiKeyInput.value = saved;
+    // Always start masked
+    apiKeyInput.type = "password";
+    eyeShow.classList.remove("hidden");
+    eyeHide.classList.add("hidden");
+    settingsModal.classList.remove("hidden");
+    setTimeout(() => apiKeyInput.focus(), 50);
+}
+
+function closeSettingsModal() {
+    if (settingsModal) settingsModal.classList.add("hidden");
+}
+
+function toggleKeyVisibility() {
+    if (apiKeyInput.type === "password") {
+        apiKeyInput.type = "text";
+        eyeShow.classList.add("hidden");
+        eyeHide.classList.remove("hidden");
+        toggleVisibilityBtn.title = "Hide";
+    } else {
+        apiKeyInput.type = "password";
+        eyeShow.classList.remove("hidden");
+        eyeHide.classList.add("hidden");
+        toggleVisibilityBtn.title = "Show";
+    }
+}
+
+// Aggressive cleaner - strips ASCII + Unicode whitespace + zero-width chars
+function sanitizeKey(raw) {
+    return String(raw || "")
+        // Zero-width chars: ZWSP, ZWNJ, ZWJ, BOM
+        .replace(/[\u200B\u200C\u200D\uFEFF]/g, "")
+        // All whitespace incl NBSP, en/em spaces, ideographic space
+        .replace(/[\s\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, "")
+        .trim();
+}
+
+async function saveApiKey() {
+    const key = sanitizeKey(apiKeyInput.value);
+    if (!key) {
+        localStorage.removeItem(API_KEY_STORAGE);
+        showToast("API key ถูกลบออก", "info");
+        closeSettingsModal();
+        if (typeof fetchDocuments === "function") fetchDocuments();
+        return;
+    }
+    localStorage.setItem(API_KEY_STORAGE, key);
+
+    // Immediate verification: does the key actually work?
+    saveSettingsBtn.disabled = true;
+    saveSettingsBtn.textContent = "กำลังตรวจสอบ…";
+    try {
+        const r = await fetch("/documents", {
+            headers: { Authorization: `Bearer ${key}` },
+        });
+        if (r.status === 200) {
+            showToast("✓ บันทึกและยืนยัน key เรียบร้อย", "success");
+            closeSettingsModal();
+            if (typeof fetchDocuments === "function") fetchDocuments();
+        } else if (r.status === 401 || r.status === 403) {
+            showToast(`⚠️ Key ไม่ถูกต้อง (HTTP ${r.status}) — ตรวจสอบว่าคัดลอกครบและไม่มี space`, "error", 4500);
+            // Keep modal open so user can retry
+        } else {
+            showToast(`⚠️ ตรวจสอบไม่ได้ (HTTP ${r.status}) — บันทึกไว้แล้ว`, "info");
+            closeSettingsModal();
+        }
+    } catch (e) {
+        showToast(`⚠️ Network error: ${e.message} — บันทึกไว้แล้ว`, "info");
+        closeSettingsModal();
+    } finally {
+        saveSettingsBtn.disabled = false;
+        saveSettingsBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save API Key';
+    }
+}
+
+function showToast(message, level = "info", durationMs = 2500) {
+    if (!toastEl) return;
+    toastEl.className = `toast ${level}`;
+    toastEl.textContent = message;
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => toastEl.classList.add("hidden"), durationMs);
+}
+
+/**
+ * getAuthHeader — Retrieve API key from localStorage and return it as a
+ * standard Bearer Authorization header object.
+ *
+ * Example usage:
+ *   fetch("/ask", {
+ *     method: "POST",
+ *     headers: {
+ *       "Content-Type": "application/json",
+ *       ...getAuthHeader(),           // ← spreads Authorization if present
+ *     },
+ *     body: JSON.stringify({ query: "hi" })
+ *   });
+ *
+ * Returns an empty object if no key is set, so spreading is always safe.
+ */
+function getAuthHeader() {
+    // Use the same aggressive cleaner so stray whitespace never breaks auth
+    const key = sanitizeKey(localStorage.getItem(API_KEY_STORAGE));
+    return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+/**
+ * handleAuthResponse — check a fetch Response for auth errors (401/403).
+ * If auth failed, show a toast and open the Settings modal automatically.
+ * Returns true if auth failed (caller should abort further processing).
+ */
+function handleAuthResponse(res) {
+    if (res.status === 401) {
+        showToast("⚠️ ยังไม่ได้ตั้งค่า API key — กรุณาใส่ใน Settings", "error", 3500);
+        openSettingsModal();
+        return true;
+    }
+    if (res.status === 403) {
+        showToast("⚠️ API key ไม่ถูกต้อง — ตรวจสอบใน Settings", "error", 3500);
+        openSettingsModal();
+        return true;
+    }
+    return false;
+}
+
+// Wire up all "open settings" triggers (there are gear buttons in both headers)
+document.querySelectorAll('[data-action="open-settings"]').forEach(btn => {
+    btn.addEventListener("click", openSettingsModal);
+});
+
+if (modalCloseBtn)       modalCloseBtn.addEventListener("click", closeSettingsModal);
+if (cancelSettingsBtn)   cancelSettingsBtn.addEventListener("click", closeSettingsModal);
+if (saveSettingsBtn)     saveSettingsBtn.addEventListener("click", saveApiKey);
+if (toggleVisibilityBtn) toggleVisibilityBtn.addEventListener("click", toggleKeyVisibility);
+
+// Close on backdrop click
+if (settingsModal) {
+    settingsModal.addEventListener("click", (e) => {
+        if (e.target === settingsModal) closeSettingsModal();
+    });
+}
+// Close on Escape · Save on Enter (when focused in input)
+document.addEventListener("keydown", (e) => {
+    if (!settingsModal || settingsModal.classList.contains("hidden")) return;
+    if (e.key === "Escape") closeSettingsModal();
+});
+if (apiKeyInput) {
+    apiKeyInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); saveApiKey(); }
+    });
+}
+
 // --- Init ---
 fetchDocuments();
-setTimeout(() => { 
-    appendMessage("assistant", "สวัสดีครับ/ค่ะ! 👋\n\n**Tip:** ถ้าต้องการค้นหาเฉพาะเอกสารใดเอกสารหนึ่ง สามารถเลือกได้ที่เมนูด้านบน นะครับ/ค่ะ", { label: "System" }); 
+// Start on landing — user picks / uploads a document first
+showLandingView();
+// Prime the chat welcome message (shown after first navigation to chat)
+setTimeout(() => {
+    appendMessage("assistant", "สวัสดีครับ/ค่ะ! 👋\n\n**Tip:** ถ้าต้องการเปลี่ยนเอกสาร กด **⬅ Documents** ที่มุมซ้ายบนเพื่อกลับไปที่หน้าเอกสาร นะครับ/ค่ะ", { label: "System" });
 }, 500);
