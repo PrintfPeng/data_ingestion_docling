@@ -25,6 +25,38 @@
     animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* LLM Mode Toggle (chat composer) */
+.llm-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1;
+}
+.llm-mode-btn:hover {
+    background: #e2e8f0;
+    border-color: #cbd5e1;
+}
+.llm-mode-btn[data-mode="local"] {
+    background: #ecfeff;
+    border-color: #67e8f9;
+    color: #0e7490;
+}
+.llm-mode-btn[data-mode="api"] {
+    background: #fef3c7;
+    border-color: #fcd34d;
+    color: #92400e;
+}
+.llm-mode-icon { font-size: 12px; }
+
 /* OCR Mode Picker (upload form) */
 .ocr-mode-option {
     display: block;

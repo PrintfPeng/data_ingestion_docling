@@ -10,6 +10,7 @@ from .hybrid_search import hybrid_search, hybrid_search_multi, is_available as h
 from .query_rewriter import rewrite_query, classify_query_intent
 from .crag import grade_retrieval, CRAG_ENABLED
 from .agentic_rag import plan_query, AGENTIC_ENABLED
+from .model_router import resolve_llm, format_model_id, LLM_MODE_AUTO
 from ingestion.config import CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_MODEL_NAME
 
 QUERY_REWRITE_ENABLED = os.getenv("QUERY_REWRITE_ENABLED", "true").lower() not in ("false", "0", "no")
@@ -244,8 +245,11 @@ async def answer_question(
     top_k: int = 5,
     mode: str = "auto",
     history: Optional[List[Dict[str, str]]] = None,
+    llm_mode: str = LLM_MODE_AUTO,
 ) -> Dict[str, Any]:
-    """Non-streaming: run retrieval + generation, return full answer."""
+    """Non-streaming: run retrieval + generation, return full answer.
+    `llm_mode` picks which answer LLM to call (local Ollama vs cloud API).
+    """
     search_results, messages = _prepare_context_and_messages(query, doc_ids, top_k, history)
 
     # Corrective RAG grader — refuse if chunks clearly don't answer the question
@@ -257,15 +261,17 @@ async def answer_question(
                 "sources": search_results,
                 "intent": "refused_by_crag",
                 "mode": mode,
+                "llm_mode": llm_mode,
                 "crag_reason": verdict.get("reason", ""),
             }
 
+    llm_cfg = resolve_llm(llm_mode)
     try:
         response = litellm.completion(
-            model=f"openai/{CUSTOM_MODEL_NAME}",
+            model=format_model_id(llm_cfg),
             messages=messages,
-            api_base=CUSTOM_API_BASE,
-            api_key=CUSTOM_API_KEY,
+            api_base=llm_cfg.api_base,
+            api_key=llm_cfg.api_key,
             temperature=0.2,
         )
         answer = response.choices[0].message.content
@@ -274,6 +280,9 @@ async def answer_question(
             "sources": search_results,
             "intent": "rag_query",
             "mode": mode,
+            "llm_mode": llm_mode,
+            "llm_provider": llm_cfg.provider,
+            "llm_model": llm_cfg.model,
         }
     except Exception as e:
         print(f"⚠️ [RAG-Error] AI Failed: {e}")
@@ -282,6 +291,8 @@ async def answer_question(
             "sources": [],
             "intent": "error",
             "mode": mode,
+            "llm_mode": llm_mode,
+            "llm_provider": llm_cfg.provider,
         }
 
 
@@ -291,6 +302,7 @@ async def answer_question_stream(
     top_k: int = 5,
     mode: str = "auto",
     history: Optional[List[Dict[str, str]]] = None,
+    llm_mode: str = LLM_MODE_AUTO,
 ):
     """Streaming: async generator yielding (event_name, payload) tuples.
     Events:
@@ -305,7 +317,11 @@ async def answer_question_stream(
         yield ("error", {"message": f"retrieval failed: {e}"})
         return
 
-    yield ("sources", {"sources": search_results, "mode": mode})
+    llm_cfg = resolve_llm(llm_mode)
+    yield ("sources", {
+        "sources": search_results, "mode": mode,
+        "llm_provider": llm_cfg.provider, "llm_model": llm_cfg.model,
+    })
 
     # CRAG grader for streaming path too
     if CRAG_ENABLED:
@@ -313,16 +329,16 @@ async def answer_question_stream(
         if verdict.get("verdict") == "no":
             msg = "ไม่พบข้อมูลในเอกสารที่จะตอบคำถามนี้ได้"
             yield ("token", {"text": msg})
-            yield ("done", {"intent": "refused_by_crag", "mode": mode})
+            yield ("done", {"intent": "refused_by_crag", "mode": mode, "llm_mode": llm_mode})
             return
 
     try:
         # Async streaming — doesn't block the event loop between tokens
         stream = await litellm.acompletion(
-            model=f"openai/{CUSTOM_MODEL_NAME}",
+            model=format_model_id(llm_cfg),
             messages=messages,
-            api_base=CUSTOM_API_BASE,
-            api_key=CUSTOM_API_KEY,
+            api_base=llm_cfg.api_base,
+            api_key=llm_cfg.api_key,
             temperature=0.2,
             stream=True,
         )
@@ -338,4 +354,7 @@ async def answer_question_stream(
         yield ("error", {"message": str(e)})
         return
 
-    yield ("done", {"intent": "rag_query", "mode": mode})
+    yield ("done", {
+        "intent": "rag_query", "mode": mode, "llm_mode": llm_mode,
+        "llm_provider": llm_cfg.provider, "llm_model": llm_cfg.model,
+    })

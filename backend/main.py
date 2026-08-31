@@ -103,7 +103,9 @@ class AskRequest(BaseModel):
     top_k: int = 5
     mode: Literal["auto", "text", "table", "both"] = "auto"
     # [NEW] รับประวัติการแชท (List of dicts: [{"role": "user", "content": "..."}, ...])
-    history: List[Dict[str, str]] = [] 
+    history: List[Dict[str, str]] = []
+    # Phase 2: per-query LLM mode selector (local vs cloud API)
+    llm_mode: Literal["auto", "local", "api"] = "auto"
 
 class AskResponse(BaseModel):
     answer: str
@@ -111,6 +113,10 @@ class AskResponse(BaseModel):
     intent: str
     mode: str
     tables: List[Dict[str, Any]] = []
+    # Phase 2 — surface the LLM used so the UI can display it
+    llm_mode: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
 
 @app.post("/ask", response_model=AskResponse, dependencies=[Depends(verify_api_key)])
 async def ask(req: AskRequest):
@@ -125,7 +131,8 @@ async def ask(req: AskRequest):
         doc_ids=sanitized_doc_ids,
         top_k=req.top_k,
         mode=req.mode,
-        history=req.history # [NEW] ส่ง history ไปให้ rag service ด้วย
+        history=req.history, # [NEW] ส่ง history ไปให้ rag service ด้วย
+        llm_mode=req.llm_mode,
     )
 
     # Post-Processing: Convert [SHOW_TABLE] tags
@@ -212,6 +219,7 @@ async def ask_stream(req: AskRequest):
                 top_k=req.top_k,
                 mode=req.mode,
                 history=req.history,
+                llm_mode=req.llm_mode,
             ):
                 yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         except Exception as e:

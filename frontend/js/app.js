@@ -603,6 +603,7 @@ async function sendMessage() {
             top_k: 20,
             mode: mode,
             history: historyToSend,
+            llm_mode: getLlmMode(),
         };
 
         try {
@@ -1004,6 +1005,44 @@ if (apiKeyInput) {
         if (e.key === "Enter") { e.preventDefault(); saveApiKey(); }
     });
 }
+
+// --- LLM Mode toggle (persisted in localStorage) ---
+const LLM_MODE_KEY = "llm_mode";
+const LLM_MODES = [
+    { value: "auto",  icon: "🔀", label: "Auto",       tip: "ค่าเริ่มต้น (Local Ollama)" },
+    { value: "local", icon: "🔒", label: "Local",      tip: "ในเครื่อง Server (Ollama) — ข้อมูลไม่ออกไปข้างนอก" },
+    { value: "api",   icon: "⚡", label: "Cloud API",  tip: "OpenRouter Gemini — คุณภาพสูงสุด (เสีย credit)" },
+];
+
+function getLlmMode() {
+    const stored = (localStorage.getItem(LLM_MODE_KEY) || "auto").toLowerCase();
+    return LLM_MODES.some(m => m.value === stored) ? stored : "auto";
+}
+function setLlmMode(val) {
+    localStorage.setItem(LLM_MODE_KEY, val);
+    renderLlmModeBtn();
+}
+function renderLlmModeBtn() {
+    const btn = document.getElementById("llmModeBtn");
+    if (!btn) return;
+    const current = getLlmMode();
+    const cfg = LLM_MODES.find(m => m.value === current) || LLM_MODES[0];
+    btn.dataset.mode = current;
+    btn.title = cfg.tip;
+    const iconEl = btn.querySelector(".llm-mode-icon");
+    const labelEl = btn.querySelector(".llm-mode-label");
+    if (iconEl) iconEl.textContent = cfg.icon;
+    if (labelEl) labelEl.textContent = cfg.label;
+}
+function cycleLlmMode() {
+    const current = getLlmMode();
+    const idx = LLM_MODES.findIndex(m => m.value === current);
+    const next = LLM_MODES[(idx + 1) % LLM_MODES.length].value;
+    setLlmMode(next);
+    showToast(`LLM: ${LLM_MODES.find(m => m.value === next).label}`, "info", 1500);
+}
+document.getElementById("llmModeBtn")?.addEventListener("click", cycleLlmMode);
+renderLlmModeBtn();
 
 // --- Init ---
 fetchDocuments();
