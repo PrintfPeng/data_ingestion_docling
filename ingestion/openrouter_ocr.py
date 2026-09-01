@@ -70,7 +70,7 @@ class OpenRouterVisionOCR:
         pix = page.get_pixmap(matrix=matrix, alpha=False)
         return pix.tobytes("png")
 
-    def _call_vision_api(self, image_b64: str) -> str:
+    def _call_vision_api(self, image_b64: str, page_no: int = 0) -> str:
         """One call to the vision LLM. Raises on failure so caller can retry."""
         resp = self.client.chat.completions.create(
             model=self.model,
@@ -91,6 +91,18 @@ class OpenRouterVisionOCR:
             temperature=0.1,
             max_tokens=4096,
         )
+        # Cost telemetry — best-effort, never blocks OCR
+        try:
+            from backend.services.cost_tracker import log_from_response
+            log_from_response(
+                endpoint="ocr",
+                provider="api",
+                model=self.model,
+                response=resp,
+                context={"page": page_no},
+            )
+        except Exception:
+            pass
         return (resp.choices[0].message.content or "").strip()
 
     def _ocr_image_b64(self, image_b64: str, page_no: int) -> str:
@@ -102,7 +114,7 @@ class OpenRouterVisionOCR:
         last_err = None
         for attempt in range(self.max_retries):
             try:
-                text = self._call_vision_api(image_b64)
+                text = self._call_vision_api(image_b64, page_no=page_no)
                 logger.info(f"OCR page {page_no}: {len(text)} chars (attempt {attempt+1})")
                 return text
             except Exception as e:

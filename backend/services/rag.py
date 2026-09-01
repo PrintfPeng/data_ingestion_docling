@@ -11,6 +11,7 @@ from .query_rewriter import rewrite_query, classify_query_intent
 from .crag import grade_retrieval, CRAG_ENABLED
 from .agentic_rag import plan_query, AGENTIC_ENABLED
 from .model_router import resolve_llm, format_model_id, LLM_MODE_AUTO
+from .cost_tracker import log_from_response
 from ingestion.config import CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_MODEL_NAME
 
 QUERY_REWRITE_ENABLED = os.getenv("QUERY_REWRITE_ENABLED", "true").lower() not in ("false", "0", "no")
@@ -275,6 +276,13 @@ async def answer_question(
             temperature=0.2,
         )
         answer = response.choices[0].message.content
+        cost_usd = log_from_response(
+            endpoint="llm",
+            provider=llm_cfg.provider,
+            model=llm_cfg.model,
+            response=response,
+            context={"query_len": len(query)},
+        )
         return {
             "answer": answer,
             "sources": search_results,
@@ -283,6 +291,7 @@ async def answer_question(
             "llm_mode": llm_mode,
             "llm_provider": llm_cfg.provider,
             "llm_model": llm_cfg.model,
+            "cost_estimate_usd": round(cost_usd, 6),
         }
     except Exception as e:
         print(f"⚠️ [RAG-Error] AI Failed: {e}")
@@ -332,8 +341,10 @@ async def answer_question_stream(
             yield ("done", {"intent": "refused_by_crag", "mode": mode, "llm_mode": llm_mode})
             return
 
+    last_usage = None
     try:
         # Async streaming — doesn't block the event loop between tokens
+        # Ask provider to include token usage in the final chunk
         stream = await litellm.acompletion(
             model=format_model_id(llm_cfg),
             messages=messages,
@@ -341,6 +352,7 @@ async def answer_question_stream(
             api_key=llm_cfg.api_key,
             temperature=0.2,
             stream=True,
+            stream_options={"include_usage": True},
         )
         async for chunk in stream:
             try:
@@ -349,12 +361,30 @@ async def answer_question_stream(
                 delta = ""
             if delta:
                 yield ("token", {"text": delta})
+            # Final usage chunk often has empty choices but a `usage` field
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                last_usage = usage
     except Exception as e:
         print(f"⚠️ [RAG-Stream-Error] {e}")
         yield ("error", {"message": str(e)})
         return
 
+    cost_usd = 0.0
+    if last_usage is not None:
+        # Wrap into a shape log_from_response can read
+        class _R:
+            pass
+        _r = _R(); _r.usage = last_usage
+        cost_usd = log_from_response(
+            endpoint="llm",
+            provider=llm_cfg.provider,
+            model=llm_cfg.model,
+            response=_r,
+            context={"query_len": len(query), "streaming": True},
+        )
     yield ("done", {
         "intent": "rag_query", "mode": mode, "llm_mode": llm_mode,
         "llm_provider": llm_cfg.provider, "llm_model": llm_cfg.model,
+        "cost_estimate_usd": round(cost_usd, 6),
     })

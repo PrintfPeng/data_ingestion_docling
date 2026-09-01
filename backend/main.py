@@ -117,6 +117,8 @@ class AskResponse(BaseModel):
     llm_mode: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    # Phase 4 — per-request cost estimate (USD)
+    cost_estimate_usd: Optional[float] = None
 
 @app.post("/ask", response_model=AskResponse, dependencies=[Depends(verify_api_key)])
 async def ask(req: AskRequest):
@@ -300,7 +302,13 @@ async def upload_pdf(
     finally:
         file.file.close()
 
-    # 4. Run Ingestion Pipeline
+    # 4. Run Ingestion Pipeline (with cost snapshot)
+    try:
+        from backend.services.cost_tracker import get_daily_total as _cost_snap
+        _cost_before = _cost_snap(days=1).get("total_usd", 0.0)
+    except Exception:
+        _cost_before = 0.0
+
     try:
         print(f"[UPLOAD] 🛑 Releasing DB lock before ingestion...")
         reset_vector_store_cache()
@@ -340,12 +348,20 @@ async def upload_pdf(
     # Clear Cache
     reset_vector_store_cache()
 
+    # Cost delta from the ingest run (best-effort — 0 for local OCR)
+    try:
+        _cost_after = _cost_snap(days=1).get("total_usd", 0.0)
+        _cost_upload = max(0.0, _cost_after - _cost_before)
+    except Exception:
+        _cost_upload = 0.0
+
     return {
         "ok": True,
         "doc_id": safe_doc_id,
         "original_doc_id": doc_id,
         "doc_type": doc_type,
         "ocr_mode": ocr_mode,
+        "cost_estimate_usd": round(_cost_upload, 6),
         "message": "File uploaded and ingested successfully (Append Mode).",
         "pipeline": "hybrid_ingestion",
     }
@@ -354,6 +370,27 @@ async def upload_pdf(
 # -----------------------------------------------------------
 # /documents (List Documents)
 # -----------------------------------------------------------
+# -----------------------------------------------------------
+# Phase 4 — cost telemetry endpoints
+# -----------------------------------------------------------
+@app.get("/stats/cost", dependencies=[Depends(verify_api_key)])
+def stats_cost(days: int = 1):
+    """Aggregate cost for the last N days plus process-lifetime session total."""
+    from backend.services.cost_tracker import get_daily_total, get_session_total
+    daily = get_daily_total(days=max(1, min(days, 30)))
+    session = get_session_total()
+    return {
+        "daily": daily,
+        "session": session,
+    }
+
+
+@app.get("/stats/cost/recent", dependencies=[Depends(verify_api_key)])
+def stats_cost_recent(limit: int = 50):
+    from backend.services.cost_tracker import get_recent_calls
+    return {"calls": get_recent_calls(limit=max(1, min(limit, 500)))}
+
+
 @app.get("/documents", dependencies=[Depends(verify_api_key)])
 def list_documents():
     docs = []

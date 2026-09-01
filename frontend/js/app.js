@@ -444,7 +444,7 @@ function appendMessage(role, text, options = {}) {
         bubble.appendChild(tablesContainer);
     }
 
-    if (!isUser && (options.intent || (options.sources && options.sources.length))) {
+    if (!isUser && (options.intent || (options.sources && options.sources.length) || options.llmProvider)) {
         const meta = document.createElement("div");
         meta.className = "mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2";
 
@@ -487,6 +487,23 @@ function appendMessage(role, text, options = {}) {
             });
             sourceContainer.appendChild(ul);
             meta.appendChild(sourceContainer);
+        }
+
+        // Cost + LLM footer (Phase 4)
+        if (options.llmProvider || options.costUsd !== undefined) {
+            const footer = document.createElement("div");
+            footer.className = "answer-cost-footer";
+            const isFree = !options.costUsd || options.costUsd === 0;
+            const costClass = isFree ? "free" : "paid";
+            const costLabel = isFree ? "$0 (local)" : (typeof fmtUsd === "function" ? fmtUsd(options.costUsd) : `$${Number(options.costUsd).toFixed(4)}`);
+            const providerLabel = options.llmProvider === "api" ? "⚡ Cloud" : "🔒 Local";
+            const modelLabel = options.llmModel ? escapeHtml(options.llmModel) : "";
+            footer.innerHTML = `
+                <span class="cost-chip">${providerLabel}</span>
+                ${modelLabel ? `<span class="cost-chip">${modelLabel}</span>` : ""}
+                <span class="cost-chip ${costClass}">${costLabel}</span>
+            `;
+            meta.appendChild(footer);
         }
         bubble.appendChild(meta);
     }
@@ -562,7 +579,11 @@ async function sendMessage() {
             appendMessage("assistant", `⏳ กำลังอัปโหลด... (ID: ${docId})`, { label: "System" });
             const res = await uploadFileToBackend(fileToUpload, docId);
 
-            appendMessage("assistant", `✅ อัปโหลดสำเร็จ! Pages: ${res.page_count}`, { label: "System" });
+            const costNote = res?.cost_estimate_usd
+                ? ` · ค่า OCR: ${fmtUsd(res.cost_estimate_usd)}`
+                : "";
+            appendMessage("assistant", `✅ อัปโหลดสำเร็จ! Pages: ${res.page_count}${costNote}`, { label: "System" });
+            refreshCostWidget();
 
             // รีเฟรชเอกสารเพื่อให้ ID ใหม่ปรากฏใน Dropdown
             await fetchDocuments();
@@ -653,6 +674,7 @@ async function streamAskAndRender(payload, loadingId) {
     let accumulated = "";
     let sources = [];
     let intent = "rag_query";
+    let doneMeta = null;
     let firstTokenSeen = false;
 
     while (true) {
@@ -677,6 +699,7 @@ async function streamAskAndRender(payload, loadingId) {
                 scrollToBottom();
             } else if (evt.event === "done") {
                 intent = evt.payload.intent || intent;
+                doneMeta = evt.payload;
             } else if (evt.event === "error") {
                 throw new Error(evt.payload.message || "stream error");
             }
@@ -691,7 +714,11 @@ async function streamAskAndRender(payload, loadingId) {
         intent,
         sources,
         tables: [],
+        llmProvider: doneMeta?.llm_provider,
+        llmModel: doneMeta?.llm_model,
+        costUsd: doneMeta?.cost_estimate_usd,
     });
+    if (doneMeta?.cost_estimate_usd !== undefined) refreshCostWidget();
 }
 
 function parseSSE(raw) {
@@ -1010,6 +1037,127 @@ if (apiKeyInput) {
         if (e.key === "Enter") { e.preventDefault(); saveApiKey(); }
     });
 }
+
+// --- Cost widget (Phase 4) — polls /stats/cost + click opens detail modal ---
+const COST_POLL_MS = 30000;
+
+function fmtUsd(x) {
+    const n = Number(x || 0);
+    if (n === 0) return "$0.00";
+    if (n < 0.01) return `$${n.toFixed(4)}`;
+    if (n < 1) return `$${n.toFixed(3)}`;
+    return `$${n.toFixed(2)}`;
+}
+
+async function fetchCostStats() {
+    try {
+        const res = await fetch("/stats/cost", { headers: { ...getAuthHeader() } });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch { return null; }
+}
+
+function updateCostWidget(stats) {
+    const el = document.getElementById("costWidget");
+    const label = document.getElementById("costWidgetLabel");
+    if (!el || !label) return;
+    const daily = stats?.daily || { total_usd: 0, warn_pct: 0 };
+    label.textContent = fmtUsd(daily.total_usd);
+    let level = "ok";
+    if (daily.warn_pct >= 90) level = "danger";
+    else if (daily.warn_pct >= 50) level = "warn";
+    el.dataset.level = level;
+    el.title = `Today: ${fmtUsd(daily.total_usd)} of ${fmtUsd(daily.warn_threshold_usd)} threshold (${daily.warn_pct}%)`;
+}
+
+async function refreshCostWidget() {
+    const s = await fetchCostStats();
+    if (s) updateCostWidget(s);
+}
+
+async function openCostModal() {
+    const modal = document.getElementById("costModal");
+    const body = document.getElementById("costModalBody");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    body.innerHTML = '<div class="cost-loading">กำลังโหลด...</div>';
+    await renderCostBody();
+}
+function closeCostModal() {
+    document.getElementById("costModal")?.classList.add("hidden");
+}
+async function renderCostBody() {
+    const body = document.getElementById("costModalBody");
+    if (!body) return;
+    const [stats, recentRes] = await Promise.all([
+        fetchCostStats(),
+        fetch("/stats/cost/recent?limit=15", { headers: { ...getAuthHeader() } }).then(r => r.ok ? r.json() : {calls: []}).catch(() => ({calls: []})),
+    ]);
+    if (!stats) { body.innerHTML = '<div class="cost-loading">โหลดข้อมูลไม่สำเร็จ</div>'; return; }
+    const daily = stats.daily || {};
+    const session = stats.session || {};
+    const pct = Math.min(100, daily.warn_pct || 0);
+    let heroClass = "";
+    if (pct >= 90) heroClass = "danger";
+    else if (pct >= 50) heroClass = "warn";
+
+    const rows = (obj) => Object.entries(obj || {}).sort((a,b) => b[1]-a[1]).map(([k,v]) =>
+        `<div class="cost-row"><span class="cost-row-key">${escapeHtml(k)}</span><span class="cost-row-val">${fmtUsd(v)}</span></div>`
+    ).join("") || `<div class="cost-loading">ยังไม่มีข้อมูล</div>`;
+
+    const recentRows = (recentRes.calls || []).map(c => `
+        <div class="cost-row" title="${escapeHtml(c.ts || "")}">
+          <span class="cost-row-key">${escapeHtml(c.endpoint || "?")} · ${escapeHtml(c.model || "?")}</span>
+          <span class="cost-row-val">${fmtUsd(c.cost_usd)}</span>
+        </div>`).join("") || `<div class="cost-loading">ยังไม่มีการเรียก</div>`;
+
+    body.innerHTML = `
+      <div class="cost-hero ${heroClass}">
+        <div class="cost-hero-label">TODAY (${daily.call_count || 0} calls)</div>
+        <div class="cost-hero-amount">${fmtUsd(daily.total_usd)}</div>
+        <div class="cost-hero-sub">${pct}% of ${fmtUsd(daily.warn_threshold_usd)} threshold</div>
+        <div class="cost-bar-track"><div class="cost-bar-fill ${heroClass}" style="width:${pct}%"></div></div>
+      </div>
+
+      <div>
+        <div class="cost-section-title">Session (${session.call_count || 0} calls)</div>
+        <div class="cost-row"><span class="cost-row-key">Since backend start</span><span class="cost-row-val">${fmtUsd(session.total_usd)}</span></div>
+      </div>
+
+      <div>
+        <div class="cost-section-title">By Endpoint</div>
+        ${rows(daily.by_endpoint)}
+      </div>
+
+      <div>
+        <div class="cost-section-title">By Provider</div>
+        ${rows(daily.by_provider)}
+      </div>
+
+      <div>
+        <div class="cost-section-title">By Model</div>
+        ${rows(daily.by_model)}
+      </div>
+
+      <div>
+        <div class="cost-section-title">Recent Calls</div>
+        ${recentRows}
+      </div>
+    `;
+}
+function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById("costWidget")?.addEventListener("click", openCostModal);
+document.getElementById("costModalClose")?.addEventListener("click", closeCostModal);
+document.getElementById("costCloseBtn2")?.addEventListener("click", closeCostModal);
+document.getElementById("costRefreshBtn")?.addEventListener("click", () => renderCostBody());
+document.getElementById("costModal")?.addEventListener("click", (e) => { if (e.target.id === "costModal") closeCostModal(); });
+
+// Kick off polling
+refreshCostWidget();
+setInterval(refreshCostWidget, COST_POLL_MS);
 
 // --- Preset picker (Phase 3) — bundles ocr_mode + llm_mode ---
 const PRESET_KEY = "processing_preset";
