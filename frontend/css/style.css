@@ -25,6 +25,71 @@
     animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* Preset picker (Settings modal) */
+.preset-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+}
+.preset-heading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 4px;
+}
+.preset-sub {
+    font-size: 11px;
+    color: #64748b;
+    margin: 0 0 12px 0;
+}
+.preset-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+@media (min-width: 640px) {
+    .preset-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.preset-card {
+    display: block;
+    cursor: pointer;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px;
+    background: #fafafa;
+    transition: all 0.15s;
+    position: relative;
+}
+.preset-card:hover { border-color: #cbd5e1; background: #fff; }
+.preset-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+.preset-card:has(input[type="radio"]:checked) {
+    border-color: #0ea5e9;
+    background: #f0f9ff;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+}
+.preset-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #0f172a;
+    margin-bottom: 4px;
+}
+.preset-desc {
+    font-size: 11px;
+    color: #64748b;
+    line-height: 1.4;
+}
+.preset-note {
+    margin-top: 10px !important;
+    font-size: 11px !important;
+}
+
 /* LLM Mode Toggle (chat composer) */
 .llm-mode-btn {
     display: inline-flex;

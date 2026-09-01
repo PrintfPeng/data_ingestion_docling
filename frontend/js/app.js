@@ -860,6 +860,11 @@ function openSettingsModal() {
     apiKeyInput.type = "password";
     eyeShow.classList.remove("hidden");
     eyeHide.classList.add("hidden");
+    // Reflect current preset selection (or highlight none if user overrode individually)
+    const currentPreset = detectCurrentPreset();
+    document.querySelectorAll('input[name="preset"]').forEach(r => {
+        r.checked = (currentPreset !== null && r.value === currentPreset);
+    });
     settingsModal.classList.remove("hidden");
     setTimeout(() => apiKeyInput.focus(), 50);
 }
@@ -1006,6 +1011,68 @@ if (apiKeyInput) {
     });
 }
 
+// --- Preset picker (Phase 3) — bundles ocr_mode + llm_mode ---
+const PRESET_KEY = "processing_preset";
+const PRESETS = {
+    air_gapped:    { ocr: "local", llm: "local" },
+    hybrid:        { ocr: "auto",  llm: "local" },  // default (matches historical behavior)
+    cloud_premium: { ocr: "api",   llm: "api"   },
+};
+
+function getPreset() {
+    const stored = localStorage.getItem(PRESET_KEY);
+    return PRESETS[stored] ? stored : "hybrid";
+}
+
+/**
+ * Apply a preset: set both ocr_mode and llm_mode in localStorage.
+ * Also re-syncs any UI elements (OCR radio picker + LLM pill).
+ */
+function applyPreset(name) {
+    const p = PRESETS[name];
+    if (!p) return;
+    localStorage.setItem(PRESET_KEY, name);
+    localStorage.setItem("ocr_mode", p.ocr);
+    localStorage.setItem(LLM_MODE_KEY, p.llm);
+    // Sync UI
+    const ocrRadio = document.querySelector(`input[name="ocrMode"][value="${p.ocr}"]`);
+    if (ocrRadio) ocrRadio.checked = true;
+    renderLlmModeBtn();
+    // Reflect preset selection in the settings modal (if open)
+    const presetRadio = document.querySelector(`input[name="preset"][value="${name}"]`);
+    if (presetRadio) presetRadio.checked = true;
+}
+
+/**
+ * Reverse mapping: given current ocr_mode + llm_mode, figure out which
+ * preset (if any) matches so the settings modal can highlight it.
+ * "Custom" is returned when the user has picked an off-preset combo.
+ */
+function detectCurrentPreset() {
+    const ocr = localStorage.getItem("ocr_mode") || "auto";
+    const llm = getLlmMode();
+    for (const [name, cfg] of Object.entries(PRESETS)) {
+        if (cfg.ocr === ocr && cfg.llm === llm) return name;
+    }
+    return null; // custom combo — none of the presets match
+}
+
+function initPresetPicker() {
+    const radios = document.querySelectorAll('input[name="preset"]');
+    if (!radios.length) return;
+    // Initial state: use stored preset, or detect from current ocr/llm settings
+    const current = detectCurrentPreset() || getPreset();
+    radios.forEach(r => { r.checked = (r.value === current); });
+    radios.forEach(r => {
+        r.addEventListener("change", () => {
+            if (r.checked) {
+                applyPreset(r.value);
+                showToast(`เปลี่ยนโหมด: ${r.closest(".preset-card").querySelector(".preset-title").textContent.trim()}`, "info", 1800);
+            }
+        });
+    });
+}
+
 // --- LLM Mode toggle (persisted in localStorage) ---
 const LLM_MODE_KEY = "llm_mode";
 const LLM_MODES = [
@@ -1043,6 +1110,21 @@ function cycleLlmMode() {
 }
 document.getElementById("llmModeBtn")?.addEventListener("click", cycleLlmMode);
 renderLlmModeBtn();
+
+// Sync OCR mode radio to what's stored (default hybrid → auto if nothing set)
+(function initOcrModeRadio() {
+    const stored = localStorage.getItem("ocr_mode") || "auto";
+    const el = document.querySelector(`input[name="ocrMode"][value="${stored}"]`);
+    if (el) el.checked = true;
+    // Persist on change
+    document.querySelectorAll('input[name="ocrMode"]').forEach(r => {
+        r.addEventListener("change", () => {
+            if (r.checked) localStorage.setItem("ocr_mode", r.value);
+        });
+    });
+})();
+
+initPresetPicker();
 
 // --- Init ---
 fetchDocuments();

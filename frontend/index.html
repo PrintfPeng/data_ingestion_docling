@@ -288,6 +288,42 @@
             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             เก็บใน <code>localStorage</code> เฉพาะเบราว์เซอร์นี้เท่านั้น · ไม่ถูกส่งไปที่ server จนกว่าคุณจะเรียกใช้
           </p>
+
+          <!-- Preset picker (Phase 3) -->
+          <div class="preset-section">
+            <div class="preset-heading">
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              โหมดการประมวลผล (Preset)
+            </div>
+            <p class="preset-sub">เลือกรูปแบบการทำงาน — จะตั้งค่า OCR + LLM ให้อัตโนมัติ</p>
+            <div class="preset-grid" role="radiogroup" aria-label="Processing preset">
+              <label class="preset-card" data-preset="air_gapped">
+                <input type="radio" name="preset" value="air_gapped">
+                <div class="preset-inner">
+                  <div class="preset-title">🔒 Air-Gapped</div>
+                  <div class="preset-desc">100% Local — ไม่ต่ออินเทอร์เน็ต<br>OCR: Docling · LLM: Ollama</div>
+                </div>
+              </label>
+              <label class="preset-card" data-preset="hybrid">
+                <input type="radio" name="preset" value="hybrid" checked>
+                <div class="preset-inner">
+                  <div class="preset-title">🔀 Hybrid (แนะนำ)</div>
+                  <div class="preset-desc">Balance — คุณภาพ + ความเร็ว<br>OCR: Gemini · LLM: Ollama</div>
+                </div>
+              </label>
+              <label class="preset-card" data-preset="cloud_premium">
+                <input type="radio" name="preset" value="cloud_premium">
+                <div class="preset-inner">
+                  <div class="preset-title">⚡ Cloud Premium</div>
+                  <div class="preset-desc">คุณภาพสูงสุด — เสีย credit<br>OCR: Gemini · LLM: Gemini API</div>
+                </div>
+              </label>
+            </div>
+            <p class="input-hint preset-note">
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              คุณสามารถ override รายตัวได้ผ่านปุ่ม OCR (หน้า Upload) และ LLM (หน้า Chat)
+            </p>
+          </div>
         </div>
 
         <div class="modal-footer">
