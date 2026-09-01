@@ -868,6 +868,8 @@ if (backToDocsBtn) {
 // ⚙️ Settings modal (API Key configuration)
 // =======================
 const API_KEY_STORAGE = "app_api_key";
+const AUTH_TOKEN_STORAGE = "auth_token";     // Phase 5.3 — session token from /auth/login
+const AUTH_USER_STORAGE = "auth_user";       // cached user info (username, is_admin)
 const settingsModal      = document.getElementById("settingsModal");
 const apiKeyInput        = document.getElementById("apiKeyInput");
 const toggleVisibilityBtn = document.getElementById("toggleVisibilityBtn");
@@ -987,7 +989,10 @@ function showToast(message, level = "info", durationMs = 2500) {
  * Returns an empty object if no key is set, so spreading is always safe.
  */
 function getAuthHeader() {
-    // Use the same aggressive cleaner so stray whitespace never breaks auth
+    // Prefer the session token from Phase 5.3 login flow; fall back to the
+    // legacy shared APP_API_KEY that power users can still paste in Settings.
+    const sess = sanitizeKey(localStorage.getItem(AUTH_TOKEN_STORAGE));
+    if (sess) return { Authorization: `Bearer ${sess}` };
     const key = sanitizeKey(localStorage.getItem(API_KEY_STORAGE));
     return key ? { Authorization: `Bearer ${key}` } : {};
 }
@@ -998,13 +1003,23 @@ function getAuthHeader() {
  * Returns true if auth failed (caller should abort further processing).
  */
 function handleAuthResponse(res) {
-    if (res.status === 401) {
-        showToast("⚠️ ยังไม่ได้ตั้งค่า API key — กรุณาใส่ใน Settings", "error", 3500);
-        openSettingsModal();
-        return true;
-    }
-    if (res.status === 403) {
-        showToast("⚠️ API key ไม่ถูกต้อง — ตรวจสอบใน Settings", "error", 3500);
+    if (res.status === 401 || res.status === 403) {
+        // Session-token path: token expired / user disabled → clear + prompt login
+        if (localStorage.getItem(AUTH_TOKEN_STORAGE)) {
+            showToast("⚠️ Session หมดอายุ — กรุณา sign in อีกครั้ง", "error", 3500);
+            localStorage.removeItem(AUTH_TOKEN_STORAGE);
+            localStorage.removeItem(AUTH_USER_STORAGE);
+            updateUserMenu();
+            showLoginOverlay();
+            return true;
+        }
+        // Legacy APP_API_KEY path → send them to Settings to fix the key
+        showToast(
+            res.status === 401
+                ? "⚠️ ยังไม่ได้ตั้งค่า API key — กรุณาใส่ใน Settings"
+                : "⚠️ API key ไม่ถูกต้อง — ตรวจสอบใน Settings",
+            "error", 3500,
+        );
         openSettingsModal();
         return true;
     }
@@ -1273,6 +1288,149 @@ renderLlmModeBtn();
 })();
 
 initPresetPicker();
+
+// --- Auth flow (Phase 5.3) ---
+
+function showLoginOverlay(errorMsg) {
+    const overlay = document.getElementById("loginOverlay");
+    if (!overlay) return;
+    overlay.classList.remove("hidden");
+    const err = document.getElementById("loginError");
+    const errTxt = document.getElementById("loginErrorText");
+    if (errorMsg && err && errTxt) {
+        errTxt.textContent = errorMsg;
+        err.style.display = "";
+    } else if (err) {
+        err.style.display = "none";
+    }
+    document.getElementById("loginUsername")?.focus();
+}
+
+function hideLoginOverlay() {
+    document.getElementById("loginOverlay")?.classList.add("hidden");
+    const err = document.getElementById("loginError");
+    if (err) err.style.display = "none";
+}
+
+function updateUserMenu() {
+    // Two menu copies live in different headers (landing + chat) — update both.
+    const menus = [
+        { menu: "userMenu",        name: "userMenuName"        },
+        { menu: "userMenuLanding", name: "userMenuNameLanding" },
+    ];
+    const raw = localStorage.getItem(AUTH_USER_STORAGE);
+    let user = null;
+    try { user = raw ? JSON.parse(raw) : null; } catch {}
+    for (const { menu, name } of menus) {
+        const menuEl = document.getElementById(menu);
+        const nameEl = document.getElementById(name);
+        if (!menuEl || !nameEl) continue;
+        if (!user) {
+            menuEl.classList.add("hidden");
+        } else {
+            nameEl.textContent = user.username || "user";
+            menuEl.title = `${user.username}${user.is_admin ? " (admin)" : ""}`;
+            menuEl.classList.remove("hidden");
+        }
+    }
+}
+
+async function tryVerifyToken() {
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE);
+    if (!token) return null;
+    try {
+        const res = await fetch("/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch { return null; }
+}
+
+async function doLogin() {
+    const username = document.getElementById("loginUsername")?.value?.trim();
+    const password = document.getElementById("loginPassword")?.value || "";
+    if (!username || !password) {
+        showLoginOverlay("กรุณากรอก username และ password");
+        return;
+    }
+    const btn = document.getElementById("loginBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Signing in..."; }
+    try {
+        const res = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showLoginOverlay(err.detail || `Login failed (${res.status})`);
+            return;
+        }
+        const d = await res.json();
+        localStorage.setItem(AUTH_TOKEN_STORAGE, d.token);
+        localStorage.setItem(AUTH_USER_STORAGE, JSON.stringify({
+            id: d.user_id, username: d.username, is_admin: d.is_admin,
+        }));
+        hideLoginOverlay();
+        updateUserMenu();
+        showToast(`ยินดีต้อนรับ ${d.username}!`, "info", 2000);
+        // Refresh page data now that we're authed
+        fetchDocuments();
+        refreshCostWidget();
+    } catch (e) {
+        showLoginOverlay(`Network error: ${e.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Sign in"; }
+        const pw = document.getElementById("loginPassword"); if (pw) pw.value = "";
+    }
+}
+
+async function doLogout() {
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE);
+    if (token) {
+        try {
+            await fetch("/auth/logout", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+        } catch { /* ignore */ }
+    }
+    localStorage.removeItem(AUTH_TOKEN_STORAGE);
+    localStorage.removeItem(AUTH_USER_STORAGE);
+    updateUserMenu();
+    showLoginOverlay();
+}
+
+// Bootstrap: on page load, verify token OR show login
+(async function initAuth() {
+    // Fast path: if user has a legacy app_api_key AND no session, allow legacy mode
+    // (backward compat for existing installs; login overlay stays hidden)
+    const hasLegacyKey = !!sanitizeKey(localStorage.getItem(API_KEY_STORAGE));
+
+    const cached = await tryVerifyToken();
+    if (cached) {
+        localStorage.setItem(AUTH_USER_STORAGE, JSON.stringify({
+            id: cached.id, username: cached.username, is_admin: cached.is_admin,
+        }));
+        updateUserMenu();
+        return;
+    }
+    // Session invalid — clear cached user + prompt login
+    localStorage.removeItem(AUTH_TOKEN_STORAGE);
+    localStorage.removeItem(AUTH_USER_STORAGE);
+    updateUserMenu();
+    if (hasLegacyKey) return;  // legacy mode — allow use without login overlay
+    showLoginOverlay();
+})();
+
+document.getElementById("loginBtn")?.addEventListener("click", doLogin);
+document.getElementById("loginPassword")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); doLogin(); }
+});
+document.getElementById("loginUsername")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); document.getElementById("loginPassword")?.focus(); }
+});
+document.getElementById("logoutBtn")?.addEventListener("click", doLogout);
+document.getElementById("logoutBtnLanding")?.addEventListener("click", doLogout);
 
 // --- Init ---
 fetchDocuments();
