@@ -28,3 +28,8 @@ opencv-python
 Pillow
 docling
 pythainlp
+
+# --- Multi-tenant auth (Phase 5) ---
+bcrypt          # password hashing
+pyjwt           # session tokens
+cryptography    # AES-256 for per-user OpenRouter key vault

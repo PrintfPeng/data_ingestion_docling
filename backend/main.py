@@ -23,25 +23,82 @@ from pydantic import BaseModel
 APP_API_KEY = (os.getenv("APP_API_KEY") or "").strip()
 
 
-def verify_api_key(authorization: Optional[str] = Header(None)) -> None:
-    """FastAPI dependency: validate the Bearer token in Authorization header.
-    Skips validation entirely when APP_API_KEY is not configured (dev mode).
-    """
-    if not APP_API_KEY:
-        return  # auth disabled
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Missing Authorization header. Set API key in Settings.",
-        )
-    token = authorization.split(" ", 1)[1].strip()
-    if token != APP_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-
 # Internal services
 from .services.logger import append_log, read_logs
 from .services.rag import answer_question, answer_question_stream
 from .services.vector_store import reset_vector_store_cache
+from .services import users as users_svc
+from .services import sessions as sessions_svc
+from .services.db import init_db
+
+
+# The "system" user represents anyone using the legacy shared APP_API_KEY
+# — backward compat for eval scripts + CLI tools. Treated as admin.
+_SYSTEM_USER: Dict[str, Any] = {
+    "id": 0,
+    "username": "system",
+    "email": None,
+    "is_admin": True,
+    "auth_kind": "app_key",
+}
+
+
+def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    return parts[1].strip() or None
+
+
+def verify_api_key(authorization: Optional[str] = Header(None)) -> None:
+    """Legacy dependency — keep for endpoints that still use it.
+    Accepts APP_API_KEY OR a valid session token. Skips validation entirely
+    when APP_API_KEY is empty AND no users are registered (initial dev mode).
+    """
+    token = _extract_bearer(authorization)
+    if not APP_API_KEY and not token:
+        return  # first-boot / dev mode
+    if token and APP_API_KEY and token == APP_API_KEY:
+        return
+    if token:
+        sess = sessions_svc.verify_token(token)
+        if sess:
+            return
+    raise HTTPException(status_code=401, detail="Missing or invalid Authorization")
+
+
+def current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """FastAPI dependency: return the current user dict.
+    Accepts either APP_API_KEY (→ system user) or a session token.
+    """
+    token = _extract_bearer(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if APP_API_KEY and token == APP_API_KEY:
+        return dict(_SYSTEM_USER)
+    sess = sessions_svc.verify_token(token)
+    if not sess:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    user = users_svc.get_user_by_id(sess["user_id"])
+    if not user or user.get("disabled_at"):
+        raise HTTPException(status_code=403, detail="User disabled")
+    user["auth_kind"] = "session"
+    return user
+
+
+def require_admin(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+# Ensure the users DB is ready at process start
+try:
+    init_db()
+except Exception as e:
+    print(f"[main] init_db warning: {e}")
 
 # Config Paths
 INGESTED_DIR = Path("ingested")
@@ -119,6 +176,56 @@ class AskResponse(BaseModel):
     llm_model: Optional[str] = None
     # Phase 4 — per-request cost estimate (USD)
     cost_estimate_usd: Optional[float] = None
+
+# -----------------------------------------------------------
+# Phase 5.2 — Auth endpoints (login/logout/me)
+# -----------------------------------------------------------
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user_id: int
+    username: str
+    is_admin: bool
+    expires_at: str
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def auth_login(req: LoginRequest):
+    user = users_svc.verify_credentials(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    session = sessions_svc.create_session(user["id"])
+    return {
+        "token": session["token"],
+        "user_id": user["id"],
+        "username": user["username"],
+        "is_admin": bool(user["is_admin"]),
+        "expires_at": session["expires_at"],
+    }
+
+
+@app.post("/auth/logout")
+def auth_logout(authorization: Optional[str] = Header(None)):
+    token = _extract_bearer(authorization)
+    if token and (not APP_API_KEY or token != APP_API_KEY):
+        sessions_svc.revoke_token(token)
+    return {"ok": True}
+
+
+@app.get("/auth/me")
+def auth_me(user: Dict[str, Any] = Depends(current_user)):
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "email": user.get("email"),
+        "is_admin": bool(user.get("is_admin")),
+        "auth_kind": user.get("auth_kind", "session"),
+    }
+
 
 @app.post("/ask", response_model=AskResponse, dependencies=[Depends(verify_api_key)])
 async def ask(req: AskRequest):
