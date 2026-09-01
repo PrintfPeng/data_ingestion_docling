@@ -95,12 +95,17 @@ class OpenRouterVisionOCR:
         # Cost telemetry — best-effort, never blocks OCR
         try:
             from backend.services.cost_tracker import log_from_response
+            # Subprocess-set OCR_USER_ID (Phase 5.5) attributes cost to the caller
+            uid_env = os.getenv("OCR_USER_ID", "0").strip()
+            try: uid = int(uid_env)
+            except (TypeError, ValueError): uid = 0
             log_from_response(
                 endpoint="ocr",
                 provider="api",
                 model=self.model,
                 response=resp,
                 context={"page": page_no},
+                user_id=uid or None,
             )
         except Exception:
             pass

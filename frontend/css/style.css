@@ -25,6 +25,66 @@
     animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* Admin dashboard (Phase 5.6) */
+.admin-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 8px;
+}
+.admin-user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+.admin-user-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) 80px 90px auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 12px;
+}
+.admin-user-row.disabled { opacity: 0.55; background: #f1f5f9; }
+.admin-user-name { font-weight: 700; color: #0f172a; }
+.admin-user-name .email { font-weight: 400; color: #94a3b8; font-size: 11px; display: block; }
+.admin-user-badge {
+    padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;
+    background: #f1f5f9; color: #475569; text-align: center;
+}
+.admin-user-badge.admin { background: #f3e8ff; color: #7e22ce; }
+.admin-user-cost { font-variant-numeric: tabular-nums; font-weight: 700; color: #059669; text-align: right; }
+.admin-user-actions { display: flex; gap: 4px; }
+.admin-btn {
+    padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;
+    border: 1px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer;
+    transition: all 0.15s;
+}
+.admin-btn:hover { background: #f1f5f9; color: #0f172a; }
+.admin-btn.danger:hover { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.admin-create-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto auto;
+    gap: 6px;
+    align-items: center;
+}
+.admin-create-grid input[type="text"], .admin-create-grid input[type="password"], .admin-create-grid input[type="email"] {
+    padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px;
+}
+.admin-adm-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #64748b; }
+@media (max-width: 640px) {
+    .admin-user-row { grid-template-columns: 1fr auto; }
+    .admin-user-badge, .admin-user-cost { text-align: left; }
+    .admin-create-grid { grid-template-columns: 1fr; }
+}
+
 /* User menu (Phase 5.3) — username pill + logout button */
 .user-menu {
     display: inline-flex;

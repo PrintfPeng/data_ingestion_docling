@@ -498,8 +498,10 @@ async def upload_pdf(
             
         # Phase 5.4: pass user's OpenRouter key to OCR subprocess via env
         # (VISION_API_KEY_OVERRIDE takes priority over VISION_API_KEY inside the subprocess).
+        # Phase 5.5: also pass OCR_USER_ID so cost_tracker attributes OCR cost to the caller.
         subprocess_env = os.environ.copy()
         uid = user.get("id") or 0
+        subprocess_env["OCR_USER_ID"] = str(uid)
         if uid > 0:
             try:
                 from backend.services import keyvault
@@ -558,24 +560,123 @@ async def upload_pdf(
 # /documents (List Documents)
 # -----------------------------------------------------------
 # -----------------------------------------------------------
-# Phase 4 — cost telemetry endpoints
+# Phase 4 + 5.5 — cost telemetry endpoints (scoped by user)
 # -----------------------------------------------------------
-@app.get("/stats/cost", dependencies=[Depends(verify_api_key)])
-def stats_cost(days: int = 1):
-    """Aggregate cost for the last N days plus process-lifetime session total."""
+def _effective_scope_user(user: Dict[str, Any], scope: Optional[str]) -> Optional[int]:
+    """Return the user_id to filter cost by. `scope=all` is admin-only."""
+    if scope == "all":
+        if not user.get("is_admin"):
+            raise HTTPException(status_code=403, detail="scope=all requires admin")
+        return None  # global aggregate
+    uid = user.get("id") or 0
+    # System user (APP_API_KEY) → sees global aggregate too
+    if uid <= 0:
+        return None
+    return int(uid)
+
+
+@app.get("/stats/cost")
+def stats_cost(
+    days: int = 1,
+    scope: Optional[str] = None,
+    user: Dict[str, Any] = Depends(current_user),
+):
+    """Aggregate cost for the last N days + session total.
+    Non-admin users see only their own; admin can pass ?scope=all for global.
+    """
     from backend.services.cost_tracker import get_daily_total, get_session_total
-    daily = get_daily_total(days=max(1, min(days, 30)))
-    session = get_session_total()
+    uid = _effective_scope_user(user, scope)
+    daily = get_daily_total(days=max(1, min(days, 30)), user_id=uid)
+    session = get_session_total(user_id=uid)
     return {
         "daily": daily,
         "session": session,
+        "scope": "all" if uid is None else f"user:{uid}",
+        "is_admin": bool(user.get("is_admin")),
     }
 
 
-@app.get("/stats/cost/recent", dependencies=[Depends(verify_api_key)])
-def stats_cost_recent(limit: int = 50):
+@app.get("/stats/cost/recent")
+def stats_cost_recent(
+    limit: int = 50,
+    scope: Optional[str] = None,
+    user: Dict[str, Any] = Depends(current_user),
+):
     from backend.services.cost_tracker import get_recent_calls
-    return {"calls": get_recent_calls(limit=max(1, min(limit, 500)))}
+    uid = _effective_scope_user(user, scope)
+    return {"calls": get_recent_calls(limit=max(1, min(limit, 500)), user_id=uid)}
+
+
+# -----------------------------------------------------------
+# Phase 5.6 — Admin dashboard endpoints
+# -----------------------------------------------------------
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+    is_admin: bool = False
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str
+
+
+class SetDisabledRequest(BaseModel):
+    disabled: bool
+
+
+@app.get("/admin/users")
+def admin_list_users(user: Dict[str, Any] = Depends(require_admin)):
+    """List all users + their daily spend (today's total_usd)."""
+    from backend.services.cost_tracker import get_per_user_totals
+    users = users_svc.list_users()
+    totals = get_per_user_totals(days=1)  # {"user_id": {"total_usd": ..., "call_count": ...}}
+    for u in users:
+        stat = totals.get(str(u["id"])) or {"total_usd": 0.0, "call_count": 0}
+        u["daily_cost_usd"] = stat["total_usd"]
+        u["daily_call_count"] = stat["call_count"]
+    return {"users": users}
+
+
+@app.post("/admin/users")
+def admin_create_user(req: CreateUserRequest, user: Dict[str, Any] = Depends(require_admin)):
+    try:
+        u = users_svc.create_user(
+            username=req.username,
+            password=req.password,
+            email=req.email,
+            is_admin=req.is_admin,
+        )
+        return {"ok": True, "user": u}
+    except users_svc.UserError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/admin/users/{user_id}/password")
+def admin_reset_password(user_id: int, req: ResetPasswordRequest, user: Dict[str, Any] = Depends(require_admin)):
+    target = users_svc.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    try:
+        users_svc.set_password(user_id, req.new_password)
+    except users_svc.UserError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Revoke all sessions so old logins can't keep working with the old password
+    sessions_svc.revoke_all_for_user(user_id)
+    return {"ok": True, "sessions_revoked": True}
+
+
+@app.put("/admin/users/{user_id}/disabled")
+def admin_set_disabled(user_id: int, req: SetDisabledRequest, user: Dict[str, Any] = Depends(require_admin)):
+    target = users_svc.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    if user_id == user["id"] and req.disabled:
+        raise HTTPException(status_code=400, detail="cannot disable your own admin account")
+    users_svc.set_disabled(user_id, req.disabled)
+    if req.disabled:
+        sessions_svc.revoke_all_for_user(user_id)
+    return {"ok": True, "disabled": req.disabled}
 
 
 @app.get("/documents", dependencies=[Depends(verify_api_key)])

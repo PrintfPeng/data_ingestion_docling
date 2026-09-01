@@ -284,6 +284,7 @@ async def answer_question(
             model=llm_cfg.model,
             response=response,
             context={"query_len": len(query)},
+            user_id=user_id,
         )
         return {
             "answer": answer,
@@ -385,6 +386,7 @@ async def answer_question_stream(
             model=llm_cfg.model,
             response=_r,
             context={"query_len": len(query), "streaming": True},
+            user_id=user_id,
         )
     yield ("done", {
         "intent": "rag_query", "mode": mode, "llm_mode": llm_mode,

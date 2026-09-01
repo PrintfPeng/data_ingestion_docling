@@ -50,11 +50,13 @@ def log_call(
     prompt_tokens: int,
     completion_tokens: int,
     context: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
 ) -> float:
     """Record one billable call. Returns the calculated USD cost (0 on failure).
 
     endpoint: "llm" (answer), "ocr", "judge", "rewriter", "planner", "grader"
     provider: "local" | "api" | "unknown"
+    user_id: caller (0 = system / APP_API_KEY, positive = authed user)
     """
     if not COST_TRACKING_ENABLED:
         return 0.0
@@ -71,6 +73,7 @@ def log_call(
             "rate_input_per_m": rate_in,
             "rate_output_per_m": rate_out,
             "cost_usd": round(cost, 8),
+            "user_id": int(user_id) if user_id is not None else 0,
         }
         if context:
             entry["ctx"] = context
@@ -93,6 +96,7 @@ def log_from_response(
     model: str,
     response: Any,
     context: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
 ) -> float:
     """Convenience wrapper that pulls token counts from a litellm/OpenAI-style
     response object (has .usage.prompt_tokens etc.).
@@ -102,13 +106,13 @@ def log_from_response(
         if usage is None and isinstance(response, dict):
             usage = response.get("usage")
         if usage is None:
-            return log_call(endpoint, provider, model, 0, 0, context)
+            return log_call(endpoint, provider, model, 0, 0, context, user_id=user_id)
         prompt = getattr(usage, "prompt_tokens", None)
         completion = getattr(usage, "completion_tokens", None)
         if prompt is None and isinstance(usage, dict):
             prompt = usage.get("prompt_tokens", 0)
             completion = usage.get("completion_tokens", 0)
-        return log_call(endpoint, provider, model, prompt or 0, completion or 0, context)
+        return log_call(endpoint, provider, model, prompt or 0, completion or 0, context, user_id=user_id)
     except Exception as e:
         logger.warning(f"[cost_tracker] log_from_response failed: {e}")
         return 0.0
@@ -140,9 +144,19 @@ def _iter_entries(days: int = 1) -> List[Dict[str, Any]]:
     return entries
 
 
-def get_daily_total(days: int = 1) -> Dict[str, Any]:
-    """Sum today's cost + per-endpoint + per-provider breakdown."""
-    entries = _iter_entries(days=days)
+def _filter_by_user(entries: List[Dict[str, Any]], user_id: Optional[int]) -> List[Dict[str, Any]]:
+    """When user_id is set (and > 0), keep only that user's entries.
+    None or 0 means 'all users' (admin view / global aggregate)."""
+    if not user_id or user_id <= 0:
+        return entries
+    return [e for e in entries if int(e.get("user_id", 0) or 0) == int(user_id)]
+
+
+def get_daily_total(days: int = 1, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Sum today's cost + per-endpoint + per-provider breakdown.
+    Pass user_id to scope the aggregate to one user; leave None for global.
+    """
+    entries = _filter_by_user(_iter_entries(days=days), user_id)
     total = 0.0
     by_endpoint: Dict[str, float] = {}
     by_provider: Dict[str, float] = {}
@@ -160,6 +174,7 @@ def get_daily_total(days: int = 1) -> Dict[str, Any]:
         "total_usd": round(total, 6),
         "call_count": count,
         "days": days,
+        "user_id": user_id or 0,  # 0 = global
         "warn_threshold_usd": COST_WARN_USD_PER_DAY,
         "warn_pct": round((total / COST_WARN_USD_PER_DAY * 100), 1) if COST_WARN_USD_PER_DAY > 0 else 0,
         "by_endpoint": {k: round(v, 6) for k, v in by_endpoint.items()},
@@ -168,9 +183,9 @@ def get_daily_total(days: int = 1) -> Dict[str, Any]:
     }
 
 
-def get_session_total() -> Dict[str, Any]:
-    """Cost since backend process started."""
-    entries = _iter_entries(days=1)
+def get_session_total(user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Cost since backend process started (optionally scoped to a user)."""
+    entries = _filter_by_user(_iter_entries(days=1), user_id)
     session_start_iso = datetime.utcfromtimestamp(_SESSION_START).isoformat() + "Z"
     filtered = [e for e in entries if e.get("ts", "") >= session_start_iso]
     total = sum(float(e.get("cost_usd") or 0.0) for e in filtered)
@@ -181,7 +196,21 @@ def get_session_total() -> Dict[str, Any]:
     }
 
 
-def get_recent_calls(limit: int = 50) -> List[Dict[str, Any]]:
-    """Return the most recent N calls (today's log), newest first."""
-    entries = _iter_entries(days=1)
+def get_recent_calls(limit: int = 50, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return the most recent N calls, newest first (optionally scoped to a user)."""
+    entries = _filter_by_user(_iter_entries(days=1), user_id)
     return list(reversed(entries))[:limit]
+
+
+def get_per_user_totals(days: int = 1) -> Dict[str, Any]:
+    """Aggregate today's cost per user_id. Used by the admin dashboard."""
+    totals: Dict[int, Dict[str, float]] = {}
+    for e in _iter_entries(days=days):
+        uid = int(e.get("user_id", 0) or 0)
+        c = float(e.get("cost_usd") or 0.0)
+        if uid not in totals:
+            totals[uid] = {"total_usd": 0.0, "call_count": 0}
+        totals[uid]["total_usd"] += c
+        totals[uid]["call_count"] += 1
+    return {str(uid): {"total_usd": round(v["total_usd"], 6), "call_count": int(v["call_count"])}
+            for uid, v in totals.items()}

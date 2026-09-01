@@ -1335,6 +1335,8 @@ function updateUserMenu() {
             menuEl.classList.remove("hidden");
         }
     }
+    // Phase 5.6: sync admin button visibility with auth state
+    if (typeof refreshAdminButton === "function") refreshAdminButton();
 }
 
 async function tryVerifyToken() {
@@ -1516,6 +1518,137 @@ function toggleUserKeyVisibility() {
 document.getElementById("saveUserKeyBtn")?.addEventListener("click", saveUserOpenrouterKey);
 document.getElementById("clearUserKeyBtn")?.addEventListener("click", clearUserOpenrouterKey);
 document.getElementById("toggleUserKeyVisibility")?.addEventListener("click", toggleUserKeyVisibility);
+
+// --- Phase 5.6: Admin Dashboard ---
+function isAdminUser() {
+    try {
+        const raw = localStorage.getItem(AUTH_USER_STORAGE);
+        return raw ? !!JSON.parse(raw).is_admin : false;
+    } catch { return false; }
+}
+
+function refreshAdminButton() {
+    const btn = document.getElementById("adminBtnLanding");
+    if (!btn) return;
+    if (isAdminUser()) btn.classList.remove("hidden");
+    else btn.classList.add("hidden");
+}
+
+async function openAdminModal() {
+    const modal = document.getElementById("adminModal");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    await renderAdminUsers();
+}
+function closeAdminModal() { document.getElementById("adminModal")?.classList.add("hidden"); }
+
+async function renderAdminUsers() {
+    const box = document.getElementById("adminUsersList");
+    if (!box) return;
+    box.innerHTML = '<div class="cost-loading">กำลังโหลด...</div>';
+    try {
+        const res = await fetch("/admin/users", { headers: { ...getAuthHeader() } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const currentUid = (() => { try { return JSON.parse(localStorage.getItem(AUTH_USER_STORAGE) || "{}").id; } catch { return null; } })();
+        if (!d.users || d.users.length === 0) { box.innerHTML = '<div class="cost-loading">ยังไม่มี user</div>'; return; }
+        box.innerHTML = d.users.map(u => {
+            const disabled = !!u.disabled_at;
+            const badge = u.is_admin
+                ? `<span class="admin-user-badge admin">ADMIN</span>`
+                : `<span class="admin-user-badge">user</span>`;
+            const actions = `
+                <button class="admin-btn" data-action="reset-pw" data-uid="${u.id}" data-user="${escapeHtml(u.username)}" title="Reset password">🔑</button>
+                <button class="admin-btn ${disabled ? '' : 'danger'}" data-action="toggle-disable" data-uid="${u.id}" data-disabled="${disabled}" ${u.id === currentUid ? 'disabled' : ''} title="${disabled ? 'Enable' : 'Disable'}">${disabled ? '✅' : '🚫'}</button>
+            `;
+            return `
+              <div class="admin-user-row ${disabled ? 'disabled' : ''}">
+                <div class="admin-user-name">
+                  ${escapeHtml(u.username)}${u.id === currentUid ? ' <span style="font-size:9px;color:#0ea5e9">(you)</span>' : ''}
+                  ${u.email ? `<span class="email">${escapeHtml(u.email)}</span>` : ''}
+                </div>
+                ${badge}
+                <span class="admin-user-cost">${fmtUsd(u.daily_cost_usd)}<br><span style="font-size:9px;color:#94a3b8;font-weight:400">${u.daily_call_count} calls</span></span>
+                <span class="admin-user-actions">${actions}</span>
+              </div>`;
+        }).join("");
+        // Wire action buttons
+        box.querySelectorAll("button[data-action]").forEach(btn => {
+            btn.addEventListener("click", () => handleAdminAction(btn));
+        });
+    } catch (e) {
+        box.innerHTML = `<div class="cost-loading">โหลดไม่สำเร็จ: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+async function handleAdminAction(btn) {
+    const action = btn.dataset.action;
+    const uid = parseInt(btn.dataset.uid, 10);
+    const username = btn.dataset.user || `user ${uid}`;
+
+    if (action === "reset-pw") {
+        const pw = prompt(`Reset password for ${username} (min 4 chars):`, "");
+        if (!pw) return;
+        try {
+            const res = await fetch(`/admin/users/${uid}/password`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", ...getAuthHeader() },
+                body: JSON.stringify({ new_password: pw }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            showToast(`✅ Reset password for ${username} · sessions revoked`, "info", 2500);
+        } catch (e) { showToast(`❌ ${e.message}`, "error", 3000); }
+    } else if (action === "toggle-disable") {
+        const currentlyDisabled = btn.dataset.disabled === "true";
+        const willDisable = !currentlyDisabled;
+        if (willDisable && !confirm(`Disable ${username}?`)) return;
+        try {
+            const res = await fetch(`/admin/users/${uid}/disabled`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", ...getAuthHeader() },
+                body: JSON.stringify({ disabled: willDisable }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+            showToast(willDisable ? `🚫 Disabled ${username}` : `✅ Enabled ${username}`, "info", 2500);
+            renderAdminUsers();
+        } catch (e) { showToast(`❌ ${e.message}`, "error", 3000); }
+    }
+}
+
+async function createNewUser() {
+    const username = document.getElementById("newUsername")?.value?.trim();
+    const password = document.getElementById("newPassword")?.value;
+    const email = document.getElementById("newEmail")?.value?.trim() || null;
+    const isAdmin = document.getElementById("newIsAdmin")?.checked || false;
+    if (!username || !password) { showToast("กรอก username + password ก่อน", "error", 2500); return; }
+    try {
+        const res = await fetch("/admin/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...getAuthHeader() },
+            body: JSON.stringify({ username, password, email, is_admin: isAdmin }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        showToast(`✅ Created user ${username}`, "info", 2500);
+        document.getElementById("newUsername").value = "";
+        document.getElementById("newPassword").value = "";
+        document.getElementById("newEmail").value = "";
+        document.getElementById("newIsAdmin").checked = false;
+        renderAdminUsers();
+    } catch (e) { showToast(`❌ ${e.message}`, "error", 3000); }
+}
+
+document.getElementById("adminBtnLanding")?.addEventListener("click", openAdminModal);
+document.getElementById("adminModalClose")?.addEventListener("click", closeAdminModal);
+document.getElementById("adminCloseBtn2")?.addEventListener("click", closeAdminModal);
+document.getElementById("adminRefreshBtn")?.addEventListener("click", renderAdminUsers);
+document.getElementById("createUserBtn")?.addEventListener("click", createNewUser);
+document.getElementById("adminModal")?.addEventListener("click", (e) => { if (e.target.id === "adminModal") closeAdminModal(); });
 
 // --- Init ---
 fetchDocuments();
