@@ -895,6 +895,8 @@ function openSettingsModal() {
         r.checked = (currentPreset !== null && r.value === currentPreset);
     });
     settingsModal.classList.remove("hidden");
+    // Phase 5.4: reveal + refresh per-user OpenRouter key section
+    if (typeof refreshUserKeyStatus === "function") refreshUserKeyStatus();
     setTimeout(() => apiKeyInput.focus(), 50);
 }
 
@@ -1431,6 +1433,89 @@ document.getElementById("loginUsername")?.addEventListener("keydown", (e) => {
 });
 document.getElementById("logoutBtn")?.addEventListener("click", doLogout);
 document.getElementById("logoutBtnLanding")?.addEventListener("click", doLogout);
+
+// --- Phase 5.4: Per-user OpenRouter key vault ---
+async function refreshUserKeyStatus() {
+    const section = document.getElementById("userKeySection");
+    const status = document.getElementById("userKeyStatus");
+    const input = document.getElementById("userOpenrouterKey");
+    if (!section) return;
+
+    // Only show when user is logged in via session (not legacy APP_API_KEY only)
+    const hasSession = !!localStorage.getItem(AUTH_TOKEN_STORAGE);
+    if (!hasSession) { section.classList.add("hidden"); return; }
+    section.classList.remove("hidden");
+
+    try {
+        const res = await fetch("/me/settings", { headers: { ...getAuthHeader() } });
+        if (!res.ok) throw new Error("failed");
+        const d = await res.json();
+        if (status) {
+            status.textContent = d.has_openrouter_key ? "✅ ตั้งแล้ว" : "⚠️ ยังไม่ได้ตั้ง (ใช้ shared key)";
+            status.style.color = d.has_openrouter_key ? "#059669" : "#d97706";
+        }
+        if (input) input.placeholder = d.has_openrouter_key ? "•••• (already saved — enter new to replace)" : "sk-or-v1-...";
+    } catch (e) {
+        if (status) { status.textContent = "โหลดสถานะไม่สำเร็จ"; status.style.color = "#dc2626"; }
+    }
+}
+
+async function saveUserOpenrouterKey() {
+    const input = document.getElementById("userOpenrouterKey");
+    const key = (input?.value || "").trim();
+    if (!key) { showToast("กรุณากรอก OpenRouter key ก่อน (หรือใช้ปุ่ม Clear)", "error", 2500); return; }
+    try {
+        const res = await fetch("/me/settings/openrouter_key", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...getAuthHeader() },
+            body: JSON.stringify({ key }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        showToast("✅ บันทึก OpenRouter key ของคุณแล้ว", "info", 2500);
+        if (input) input.value = "";
+        refreshUserKeyStatus();
+    } catch (e) {
+        showToast(`❌ Save failed: ${e.message}`, "error", 3000);
+    }
+}
+
+async function clearUserOpenrouterKey() {
+    if (!confirm("ล้าง OpenRouter key ของคุณ? ระบบจะกลับไปใช้ shared key")) return;
+    try {
+        const res = await fetch("/me/settings/openrouter_key", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...getAuthHeader() },
+            body: JSON.stringify({ key: "" }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        showToast("🗑️ ล้าง key แล้ว", "info", 2000);
+        const input = document.getElementById("userOpenrouterKey");
+        if (input) input.value = "";
+        refreshUserKeyStatus();
+    } catch (e) {
+        showToast(`❌ Clear failed: ${e.message}`, "error", 3000);
+    }
+}
+
+function toggleUserKeyVisibility() {
+    const input = document.getElementById("userOpenrouterKey");
+    const eyeShow = document.getElementById("userKeyEyeShow");
+    const eyeHide = document.getElementById("userKeyEyeHide");
+    if (!input) return;
+    if (input.type === "password") {
+        input.type = "text";
+        eyeShow?.classList.add("hidden");
+        eyeHide?.classList.remove("hidden");
+    } else {
+        input.type = "password";
+        eyeShow?.classList.remove("hidden");
+        eyeHide?.classList.add("hidden");
+    }
+}
+
+document.getElementById("saveUserKeyBtn")?.addEventListener("click", saveUserOpenrouterKey);
+document.getElementById("clearUserKeyBtn")?.addEventListener("click", clearUserOpenrouterKey);
+document.getElementById("toggleUserKeyVisibility")?.addEventListener("click", toggleUserKeyVisibility);
 
 // --- Init ---
 fetchDocuments();

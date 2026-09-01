@@ -48,11 +48,28 @@ def _cloud_defaults():
     }
 
 
-def resolve_llm(mode: Optional[str] = None) -> LLMConfig:
-    """Return the LLM config for the requested mode.
+def _user_openrouter_key(user_id: Optional[int]) -> Optional[str]:
+    """Fetch + decrypt this user's stored OpenRouter key, or None."""
+    if not user_id or user_id <= 0:
+        return None
+    try:
+        from . import users as users_svc
+        from . import keyvault
+        settings = users_svc.get_settings(user_id)
+        blob = settings.get("openrouter_key_encrypted")
+        if not blob:
+            return None
+        return keyvault.decrypt(blob)
+    except Exception:
+        return None
 
-    Fail-open: if "api" is requested but no cloud key is configured, falls
-    back to "local" (never blocks a query on missing cloud creds).
+
+def resolve_llm(mode: Optional[str] = None, user_id: Optional[int] = None) -> LLMConfig:
+    """Return the LLM config for the requested mode + optional acting user.
+
+    User's own OpenRouter key (if set) takes priority for `mode=api`; falls
+    back to the shared VISION_API_KEY. Fail-open: if `mode=api` is asked
+    but no cloud key is available at all, silently downgrades to `local`.
     """
     mode = (mode or os.getenv("DEFAULT_LLM_MODE") or LLM_MODE_AUTO).lower().strip()
     if mode not in LLM_MODES:
@@ -63,15 +80,16 @@ def resolve_llm(mode: Optional[str] = None) -> LLMConfig:
 
     if mode == LLM_MODE_API:
         cloud = _cloud_defaults()
-        if not cloud["api_key"]:
-            # Silent downgrade to local — caller sees provider="local" in response
+        user_key = _user_openrouter_key(user_id)
+        api_key = user_key or cloud["api_key"]
+        if not api_key:
             mode = LLM_MODE_LOCAL
         else:
             return LLMConfig(
                 provider="api",
                 model=cloud["model"],
                 api_base=cloud["api_base"],
-                api_key=cloud["api_key"],
+                api_key=api_key,
             )
 
     # local

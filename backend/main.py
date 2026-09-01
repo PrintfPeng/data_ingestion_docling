@@ -227,14 +227,72 @@ def auth_me(user: Dict[str, Any] = Depends(current_user)):
     }
 
 
-@app.post("/ask", response_model=AskResponse, dependencies=[Depends(verify_api_key)])
-async def ask(req: AskRequest):
+# -----------------------------------------------------------
+# Phase 5.4 — Per-user settings (OpenRouter key vault)
+# -----------------------------------------------------------
+class UserSettingsResponse(BaseModel):
+    default_preset: str
+    has_openrouter_key: bool
+
+
+class SetOpenrouterKeyRequest(BaseModel):
+    key: str  # empty string clears the key
+
+
+class SetPresetRequest(BaseModel):
+    preset: Literal["air_gapped", "hybrid", "cloud_premium"]
+
+
+def _user_id_or_400(user: Dict[str, Any]) -> int:
+    uid = user.get("id")
+    if not uid or uid <= 0:
+        raise HTTPException(status_code=400, detail="/me endpoints require a logged-in user (not system)")
+    return int(uid)
+
+
+@app.get("/me/settings", response_model=UserSettingsResponse)
+def get_me_settings(user: Dict[str, Any] = Depends(current_user)):
+    uid = _user_id_or_400(user)
+    s = users_svc.get_settings(uid)
+    return {
+        "default_preset": s.get("default_preset", "hybrid"),
+        "has_openrouter_key": bool(s.get("openrouter_key_encrypted")),
+    }
+
+
+@app.put("/me/settings/openrouter_key")
+def set_me_openrouter_key(
+    req: SetOpenrouterKeyRequest,
+    user: Dict[str, Any] = Depends(current_user),
+):
+    uid = _user_id_or_400(user)
+    from backend.services import keyvault
+    if req.key.strip():
+        blob = keyvault.encrypt(req.key.strip())
+        users_svc.set_openrouter_key(uid, blob)
+        return {"ok": True, "has_openrouter_key": True}
+    users_svc.set_openrouter_key(uid, None)
+    return {"ok": True, "has_openrouter_key": False}
+
+
+@app.put("/me/settings/default_preset")
+def set_me_default_preset(
+    req: SetPresetRequest,
+    user: Dict[str, Any] = Depends(current_user),
+):
+    uid = _user_id_or_400(user)
+    users_svc.set_default_preset(uid, req.preset)
+    return {"ok": True, "default_preset": req.preset}
+
+
+@app.post("/ask", response_model=AskResponse)
+async def ask(req: AskRequest, user: Dict[str, Any] = Depends(current_user)):
     # 1. Normalize IDs
     sanitized_doc_ids = None
     if req.doc_ids:
         sanitized_doc_ids = [_normalize_id(did) for did in req.doc_ids if did]
 
-    # 2. Call RAG Service
+    # 2. Call RAG Service — pass user_id so cloud calls use their key
     result = await answer_question(
         query=req.query,
         doc_ids=sanitized_doc_ids,
@@ -242,6 +300,7 @@ async def ask(req: AskRequest):
         mode=req.mode,
         history=req.history, # [NEW] ส่ง history ไปให้ rag service ด้วย
         llm_mode=req.llm_mode,
+        user_id=user.get("id") or None,
     )
 
     # Post-Processing: Convert [SHOW_TABLE] tags
@@ -311,14 +370,16 @@ async def ask(req: AskRequest):
 # -----------------------------------------------------------
 # /ask/stream — SSE streaming variant of /ask
 # -----------------------------------------------------------
-@app.post("/ask/stream", dependencies=[Depends(verify_api_key)])
-async def ask_stream(req: AskRequest):
+@app.post("/ask/stream")
+async def ask_stream(req: AskRequest, user: Dict[str, Any] = Depends(current_user)):
     """Stream the answer token-by-token via Server-Sent Events.
     Emits the retrieved sources first, then tokens, then a done event.
     """
     sanitized_doc_ids = None
     if req.doc_ids:
         sanitized_doc_ids = [_normalize_id(d) for d in req.doc_ids if d]
+
+    caller_id = user.get("id") or None
 
     async def event_stream():
         try:
@@ -329,6 +390,7 @@ async def ask_stream(req: AskRequest):
                 mode=req.mode,
                 history=req.history,
                 llm_mode=req.llm_mode,
+                user_id=caller_id,
             ):
                 yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         except Exception as e:
@@ -371,13 +433,14 @@ def get_history(limit: int = 50):
 _VALID_OCR_MODES = {"auto", "local", "api"}
 
 
-@app.post("/upload", dependencies=[Depends(verify_api_key)])
+@app.post("/upload")
 async def upload_pdf(
     file: UploadFile = File(...),
     doc_id: str = Form(...),
     doc_type: str = Form(""),
     use_ocr: bool = Form(True),
     ocr_mode: str = Form("auto"),
+    user: Dict[str, Any] = Depends(current_user),
 ):
     # 0. Defaults
     if not doc_type.strip(): doc_type = "generic_doc"
@@ -433,8 +496,25 @@ async def upload_pdf(
                 cmd.append("--no-ocr")
             cmd.extend(["--ocr-mode", ocr_mode])
             
+        # Phase 5.4: pass user's OpenRouter key to OCR subprocess via env
+        # (VISION_API_KEY_OVERRIDE takes priority over VISION_API_KEY inside the subprocess).
+        subprocess_env = os.environ.copy()
+        uid = user.get("id") or 0
+        if uid > 0:
+            try:
+                from backend.services import keyvault
+                settings = users_svc.get_settings(uid)
+                blob = settings.get("openrouter_key_encrypted")
+                if blob:
+                    user_key = keyvault.decrypt(blob)
+                    if user_key:
+                        subprocess_env["VISION_API_KEY_OVERRIDE"] = user_key
+                        print(f"[UPLOAD] using user_id={uid} OpenRouter key for OCR")
+            except Exception as e:
+                print(f"[UPLOAD] user key resolution failed: {e}")
+
         print(f"[UPLOAD] Running pipeline: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=subprocess_env)
 
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Ingestion pipeline failed: {e}")

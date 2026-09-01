@@ -247,9 +247,11 @@ async def answer_question(
     mode: str = "auto",
     history: Optional[List[Dict[str, str]]] = None,
     llm_mode: str = LLM_MODE_AUTO,
+    user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Non-streaming: run retrieval + generation, return full answer.
     `llm_mode` picks which answer LLM to call (local Ollama vs cloud API).
+    `user_id` (when set) makes cloud calls use that user's stored OpenRouter key.
     """
     search_results, messages = _prepare_context_and_messages(query, doc_ids, top_k, history)
 
@@ -266,7 +268,7 @@ async def answer_question(
                 "crag_reason": verdict.get("reason", ""),
             }
 
-    llm_cfg = resolve_llm(llm_mode)
+    llm_cfg = resolve_llm(llm_mode, user_id=user_id)
     try:
         response = litellm.completion(
             model=format_model_id(llm_cfg),
@@ -312,6 +314,7 @@ async def answer_question_stream(
     mode: str = "auto",
     history: Optional[List[Dict[str, str]]] = None,
     llm_mode: str = LLM_MODE_AUTO,
+    user_id: Optional[int] = None,
 ):
     """Streaming: async generator yielding (event_name, payload) tuples.
     Events:
@@ -326,7 +329,7 @@ async def answer_question_stream(
         yield ("error", {"message": f"retrieval failed: {e}"})
         return
 
-    llm_cfg = resolve_llm(llm_mode)
+    llm_cfg = resolve_llm(llm_mode, user_id=user_id)
     yield ("sources", {
         "sources": search_results, "mode": mode,
         "llm_provider": llm_cfg.provider, "llm_model": llm_cfg.model,

@@ -48,7 +48,8 @@ class OpenRouterVisionOCR:
         max_workers: int = DEFAULT_MAX_WORKERS,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ):
-        self.api_key = api_key or os.getenv("VISION_API_KEY")
+        # Phase 5.4: subprocess-set override (per-user key) wins over the shared env
+        self.api_key = api_key or os.getenv("VISION_API_KEY_OVERRIDE") or os.getenv("VISION_API_KEY")
         self.api_base = api_base or os.getenv("VISION_API_BASE", DEFAULT_API_BASE)
         self.model = model or os.getenv("VISION_MODEL", DEFAULT_MODEL)
         self.dpi = dpi
